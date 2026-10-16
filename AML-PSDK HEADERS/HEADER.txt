@@ -103,5 +103,3 @@ H_CPP.txt/ (192 files)
 ├── 🎯 Game Core & Combat
 │   ├── Game.h.txt / GameLogic.h.txt / Stats.h.txt
 │   └── Weapon.h.txt / WeaponInfo.h.txt / WeaponType.h.txt
-└── 📄 Reference Doc
-    └── GTA SAN ANDREAS ANDROID - AML-PSDK COMPLETE ADDRESS INVENTORY.txt
