@@ -1,0 +1,1605 @@
+================================================================================
+AML MOD DEVELOPMENT — CONVERSION TEMPLATES & PATTERNS
+Teaching templates, automatic patterns, CLEO→AML conversion guides,
+and menu (CSI) patterns for pause-menu / settings-tab buttons.
+================================================================================
+
+CONTENTS:
+- AML CSA AUTOMATIC PATTERN (skeleton for automatic mods)
+- AML CSA / CSI → AML CONVERSION (teaching template)
+- Cleo convert resource (strict conversion instructions)
+- CSI menu create (settings-tab pattern)
+- CSI button pause menu option (pause-menu button pattern)
+================================================================================
+
+
+########## AML CSA AUTOMATIC PATTERN ##########
+
+// =============================================================================
+// AML CSA AUTOMATIC PATTERN — template
+// =============================================================================
+//
+// Use this template whenever a CLEO .csa / .csi script needs to run
+// automatically on AML. No menu, no pause button, no user interaction.
+//
+// The pattern covers:
+//
+//   - The include block every opcode-driven automatic mod uses.
+//   - The Op<ID> wrapper over OpcodeCaller.
+//   - A tick function called from Events::processScriptsEvent.
+//   - A ResetState function re-registered on all three session events.
+//   - A player-pointer check inside the tick for paths the events miss.
+//   - A logcat-first logging block using __android_log_print.
+//
+// Replace every <<<...>>> placeholder.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 1. INCLUDES
+// =============================================================================
+//
+// Include only what the mod uses. The block below is the minimum for an
+// opcode-driven automatic mod.
+//
+// Add one header per game class the mod touches. If the .cpp names a
+// class, include the header that declares it. The compiler will name the
+// missing symbol on a mismatch.
+//
+// =============================================================================
+
+#include <mod/amlmod.h>
+#include <android/log.h>
+
+#include <aml-psdk/game_sa/Events.h>
+#include <aml-psdk/game_sa/base/Timer.h>
+#include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+#include <aml-psdk/game_sa/entity/PlayerPed.h>
+
+<<<extra_headers>>>
+
+
+// =============================================================================
+// 3. MOD DECLARATION
+// =============================================================================
+//
+// MYMOD      — no configuration file.
+// MYMODCFG   — mod reads settings via cfg->GetInt / GetFloat / GetBool.
+//
+// Package name format: net.author.modname or com.author.modname, all
+// lowercase.
+//
+// =============================================================================
+
+MYMOD(<<<guid>>>, <<<Name>>>, <<<version>>>, <<<Author>>>)
+NEEDGAME(com.rockstargames.gtasa)
+
+
+// =============================================================================
+// 4. NAMESPACE
+// =============================================================================
+//
+// Everything the mod does lives inside one namespace. This keeps the
+// symbols out of the global namespace and matches the family style.
+//
+// =============================================================================
+
+namespace <<<Name>>>
+{
+    // -------------------------------------------------------------------------
+    // 4a. Op<ID> wrapper
+    //
+    // Every opcode call goes through this wrapper. The opcode number is a
+    // compile-time template parameter. The two VM pointers are reset to
+    // g_ScriptBuffer before every call. m_bWastedBustedCheck is set to
+    // true — the same flag CRunningScript::Init sets.
+    //
+    // Return value is the VM's condition flag. Callers use plain
+    // if (Op<...>(...)).
+    // -------------------------------------------------------------------------
+
+    template <uint16_t ID, typename... Args>
+    static inline bool Op(Args... args)
+    {
+        OpcodeCaller::g_Script.m_pBaseIP =
+            OpcodeCaller::g_Script.m_pCurrentIP =
+                OpcodeCaller::g_ScriptBuffer;
+
+        OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+        return Command<ID>(args...);
+    }
+
+
+    // -------------------------------------------------------------------------
+    // 4b. Wraparound-safe timing
+    //
+    // Every timestamp is u32. Never use now >= target on a u32 millisecond
+    // counter — it fails across the ~49.7-day wrap. Reached() casts the
+    // subtraction to int32 so it is signed.
+    // -------------------------------------------------------------------------
+
+    static inline bool Reached(uint32_t now, uint32_t target)
+    {
+        return static_cast<int32_t>(now - target) >= 0;
+    }
+
+
+    // -------------------------------------------------------------------------
+    // 4c. State
+    //
+    // Every variable that persists between ticks becomes a namespace-
+    // scoped static. This is where you translate every CLEO local
+    // variable that survives across the main loop.
+    // -------------------------------------------------------------------------
+
+    static <<<state_type>>>   g_state       = <<<state_init>>>;
+    static uint32_t           g_nNextTick   = 0;
+    static constexpr uint32_t TICK_MS       = <<<tick_ms>>>;
+    static CPlayerPed*        g_LastPlayer  = nullptr;
+
+
+    // -------------------------------------------------------------------------
+    // 4d. ResetState
+    //
+    // Zero every flag, timestamp, cached handle, vector.
+    //
+    // Called from all three session events. Must not touch the Op wrapper,
+    // the tick logic, or the opcode sequence.
+    // -------------------------------------------------------------------------
+
+    static void ResetState()
+    {
+        g_state      = <<<state_init>>>;
+        g_nNextTick  = 0;
+        g_LastPlayer = nullptr;
+        LOGI("session reset");
+    }
+
+
+    // -------------------------------------------------------------------------
+    // 4e. Update
+    //
+    // The per-tick body. Called from processScriptsEvent on the game
+    // thread, inside CTheScripts::Process. The VM state is fully
+    // consistent at this point.
+    //
+    // Three layers of session handling:
+    //
+    //   - If the player ped does not exist yet: clear the cached pointer
+    //     and return.
+    //   - If the ped pointer changed since last tick: full reset. The
+    //     ped pointer changes on every session boundary, so this catches
+    //     any load path the events miss.
+    //   - Otherwise: run the mod's work.
+    //
+    // The tick is throttled so the body runs at most every TICK_MS
+    // milliseconds.
+    // -------------------------------------------------------------------------
+
+    static void Update()
+    {
+        const uint32_t now = CTimer::GetTimeInMS();
+        if (!Reached(now, g_nNextTick))
+            return;
+        g_nNextTick = now + TICK_MS;
+
+        if (!Op<0x0256>(0))                 // IS_PLAYER_PLAYING
+        {
+            g_LastPlayer = nullptr;
+            return;
+        }
+
+        CPlayerPed* player = FindPlayerPed(-1);
+        if (!player)
+        {
+            g_LastPlayer = nullptr;
+            return;
+        }
+
+        if (player != g_LastPlayer)
+        {
+            g_LastPlayer = player;
+            g_state      = <<<state_init>>>;
+        }
+
+        // ------------------------------------------------------------------
+        // Mod work.
+        //
+        // Every opcode here goes through Op<ID>. Argument order comes
+        // from the source .csa's disassembly, not a reference table.
+        //
+        // Every target-valued write is edge-triggered — write only when
+        // the current value is below or different from the target. Never
+        // write unconditionally every tick.
+        //
+        // If the work depends on a model, stream it first:
+        //   CStreaming::RequestModel(modelId, 2);
+        //   CStreaming::LoadAllRequestedModels(false);
+        // ------------------------------------------------------------------
+
+        <<<update_body>>>
+    }
+}
+
+
+// =============================================================================
+// 5. ENTRY
+// =============================================================================
+//
+// ON_MOD_LOAD is called once, during JNI_OnLoad, before the game has
+// initialised any of its subsystems.
+//
+// Two rules:
+//
+//   - Do not touch game state here. Not the script VM, not the pools,
+//     not the streaming system, not the IPL store. Everything that
+//     depends on game state must run inside processScriptsEvent.
+//
+//   - Register the processScriptsEvent hook first. That is where every
+//     tick body runs.
+//
+// Then register ResetState on all three session events. Registering only
+// one leaves some load paths unhandled — the three engine code paths
+// that begin a session are new game, save load, and in-game restart.
+//
+// =============================================================================
+
+ON_MOD_LOAD()
+{
+    LOGI("=== <<<Name>>> loading ===");
+
+    Events::processScriptsEvent += []() { <<<Name>>>::Update(); };
+
+    Events::restartGameEvent += []() { <<<Name>>>::ResetState(); };
+    Events::initGameEvent    += []() { <<<Name>>>::ResetState(); };
+    Events::reInitGameEvent  += []() { <<<Name>>>::ResetState(); };
+
+    LOGI("loaded OK");
+}
+
+
+// =============================================================================
+// 6. HOW TO CONVERT A .CSA INTO THIS PATTERN
+// =============================================================================
+//
+//   1. Enumerate every opcode in the source .csa. Each 0xNNNN is one
+//      conversion unit.
+//
+//   2. Note the parameter string. Argument order comes from the source
+//      disassembly, not a reference table.
+//
+//   3. Convert one opcode at a time to Op<0xNNNN>(...), in the same
+//      order the source runs them.
+//
+//   4. Preserve conditional structure — 00D6: if / 004D: jump_if_false
+//      becomes if (!Op<...>(...)) return; (or continue; depending on
+//      context).
+//
+//   5. Preserve timing — 0001: wait <ms> becomes a u32 timestamp
+//      comparison via Reached(), never a sleep, never a busy-wait.
+//
+//   6. Preserve state — every CLEO local that survives across the loop
+//      becomes a namespace-scoped static.
+//
+//   7. Preserve entry conditions — the leading 0256 check, the 01F5
+//      cache, the state reset when the player vanishes.
+//
+//   8. If the source has a state machine, reproduce it exactly with
+//      statics and the same transition timings.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 7. STRICT RULES
+// =============================================================================
+//
+//   - Do not use SAUtils, ISAUtils, ScriptCommand, CALLSCM, DEFOPCODE.
+//
+//   - Do not use Op<0xNNNN> without the wrapper defined in section 4a.
+//
+//   - Do not invent opcode numbers. If an opcode is not in the source
+//     script, it is not in the mod.
+//
+//   - Do not invent parameter orders. Take them from the disassembly.
+//
+//   - Do not use Events::gameProcessEvent for opcode-driven work.
+//
+//   - Do not read or write game state from ON_MOD_LOAD.
+//
+//   - Every model-dependent action streams first.
+//
+//   - Never call SetModelIsDeletable on models the player will use.
+//
+//   - Every timer uses Reached() and u32 timestamps.
+//
+//   - Every target-valued write is edge-triggered.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 8. BUILD FILES
+// =============================================================================
+//
+// Android.mk:
+//
+//   LOCAL_PATH := $(call my-dir)
+//
+//   ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+//       ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+//           LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+//       else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+//           LOCAL_PATH := $(CURDIR)/jni
+//       else ifneq ($(wildcard $(NDK_PROJECT_PATH)/main.cpp),)
+//           LOCAL_PATH := $(NDK_PROJECT_PATH)
+//       else ifneq ($(wildcard $(CURDIR)/main.cpp),)
+//           LOCAL_PATH := $(CURDIR)
+//       else
+//           $(error Cannot find main.cpp)
+//       endif
+//   endif
+//
+//   include $(CLEAR_VARS)
+//   LOCAL_CPP_EXTENSION := .cpp .cc
+//
+//   ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
+//       LOCAL_MODULE := <<<Name>>>
+//   else ifeq ($(TARGET_ARCH_ABI), arm64-v8a)
+//       LOCAL_MODULE := <<<Name>>>64
+//   else
+//       LOCAL_MODULE := <<<Name>>>
+//   endif
+//
+//   LOCAL_SRC_FILES := main.cpp
+//
+//   LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+//                       $(LOCAL_PATH)/mod \
+//                       $(LOCAL_PATH)/aml-psdk
+//
+//   LOCAL_CXXFLAGS += -O2 -DNDEBUG -std=c++17 -fvisibility=hidden
+//   LOCAL_LDLIBS   += -llog
+//
+//   include $(BUILD_SHARED_LIBRARY)
+//
+// Application.mk:
+//
+//   APP_ABI      := armeabi-v7a arm64-v8a
+//   APP_PLATFORM := android-24
+//   APP_STL      := c++_static
+//   APP_CPPFLAGS := -std=c++17
+//
+// =============================================================================
+
+
+// =============================================================================
+// 9. VERIFICATION CHECKLIST
+// =============================================================================
+//
+//   [ ] Op<ID> wrapper present and used for every opcode.
+//   [ ] m_pBaseIP = m_pCurrentIP = g_ScriptBuffer before every command.
+//   [ ] m_bWastedBustedCheck = true before every command.
+//   [ ] Hook registered on Events::processScriptsEvent.
+//   [ ] ResetState() defined and registered on all three session events.
+//   [ ] Player-ped pointer session check inside Update().
+//   [ ] Every game-class reference has a matching #include.
+//   [ ] Every timer uses Reached() and u32 timestamps.
+//   [ ] Every target-valued write is edge-triggered.
+//   [ ] Every model-dependent action streams first.
+//   [ ] No SAUtils ScriptCommand / CALLSCM / DEFOPCODE.
+//   [ ] Android.mk has the LOCAL_PATH guard and per-ABI module name.
+//   [ ] Application.mk matches the family standard.
+//
+// =============================================================================
+
+########## AML CSA / CSI → AML CONVERSION (Teaching Template) ##########
+
+// =============================================================================
+// AML CSA  /  CSI → AML CONVERSION — teaching template
+// =============================================================================
+//
+// This document teaches how to convert a CLEO .csa / .csi script into an
+// AML native mod that uses only the Op<ID> wrapper over OpcodeCaller.
+//
+// It pairs with two other documents:
+//
+//   - "AML CSI AUTOMATIC PATTERN — template"   — the skeleton the output
+//                                                 mod must follow.
+//   - "AML CSI CSA CONVERSION COMPANION"       — the rules reference.
+//
+// This file is the tutorial. It shows, by example, how every CLEO
+// construct maps to a C++ construct, and how to fill in the skeleton.
+//
+// It is an instruction, not a code file. The reader fills in the
+// placeholders and produces a working main.cpp.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 1. THE FIVE THINGS EVERY CLEO SCRIPT HAS
+// =============================================================================
+//
+// Every .csa / .csi script, however long, is built from five things:
+//
+//   1. A start point             — the 0000: entry and an initial wait.
+//   2. A player check            — usually 0256, sometimes 01F5.
+//   3. A main loop               — the ":LABEL / wait / body / jump" block.
+//   4. State                     — locals (0@, 1@, ...) that survive a
+//                                  loop iteration.
+//   5. Opcodes                   — everything the script actually does.
+//
+// The AML equivalent of each:
+//
+//   1. start point  →  ON_MOD_LOAD() + first processScriptsEvent tick.
+//   2. player check →  Op<0x0256>(0) inside Update().
+//   3. main loop    →  Update() called from processScriptsEvent.
+//   4. state        →  namespace-scoped static variables.
+//   5. opcodes      →  Op<0xNNNN>(...) calls, one per opcode.
+//
+// Every conversion is these five substitutions, applied in order.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 2. A WORKED EXAMPLE — BEFORE AND AFTER
+// =============================================================================
+//
+// To make the substitutions concrete, here is a small CLEO script and
+// its complete C++ equivalent.
+//
+// The script's job: every half second, if the player is on foot, print
+// the message "ON FOOT". Otherwise print "IN VEHICLE".
+//
+// -----------------------------------------------------------------------------
+// 2a. The CLEO source
+// -----------------------------------------------------------------------------
+//
+//   {$CLEO .csa}
+//   0000:
+//
+//   :WAIT_PLAYER
+//   0001: wait 500 ms
+//   0256:   player $PLAYER_CHAR defined
+//   004D: jump_if_false @WAIT_PLAYER
+//
+//   :MAIN
+//   0001: wait 500 ms
+//   0256:   player $PLAYER_CHAR defined
+//   004D: jump_if_false @WAIT_PLAYER
+//
+//   00D6: if
+//   044B:   actor $PLAYER_ACTOR on_foot
+//   004D: jump_if_false @IN_VEHICLE
+//
+//   03E5: show_text_box "ON FOOT"
+//   0002: jump @MAIN
+//
+//   :IN_VEHICLE
+//   03E5: show_text_box "IN VEHICLE"
+//   0002: jump @MAIN
+//
+// -----------------------------------------------------------------------------
+// 2b. The C++ equivalent
+// -----------------------------------------------------------------------------
+//
+//   namespace <<<Name>>>
+//   {
+//       template <uint16_t ID, typename... Args>
+//       static inline bool Op(Args... args)
+//       {
+//           OpcodeCaller::g_Script.m_pBaseIP =
+//               OpcodeCaller::g_Script.m_pCurrentIP =
+//                   OpcodeCaller::g_ScriptBuffer;
+//           OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+//           return Command<ID>(args...);
+//       }
+//
+//       static inline bool Reached(uint32_t now, uint32_t target)
+//       {
+//           return static_cast<int32_t>(now - target) >= 0;
+//       }
+//
+//       static uint32_t    g_nNextTick  = 0;
+//       static constexpr uint32_t TICK_MS = 500;
+//       static CPlayerPed* g_LastPlayer = nullptr;
+//
+//       static void ResetState()
+//       {
+//           g_nNextTick  = 0;
+//           g_LastPlayer = nullptr;
+//       }
+//
+//       static void Update()
+//       {
+//           const uint32_t now = CTimer::GetTimeInMS();
+//           if (!Reached(now, g_nNextTick)) return;
+//           g_nNextTick = now + TICK_MS;
+//
+//           if (!Op<0x0256>(0))                       // IS_PLAYER_PLAYING
+//           {
+//               g_LastPlayer = nullptr;
+//               return;
+//           }
+//
+//           CPlayerPed* player = FindPlayerPed(-1);
+//           if (!player) { g_LastPlayer = nullptr; return; }
+//
+//           if (player != g_LastPlayer)
+//               g_LastPlayer = player;
+//
+//           if (Op<0x044B>(-1))                       // IS_CHAR_ON_FOOT (local player)
+//               Op<0x03E5>("ON FOOT");                // PRINT_HELP / text box
+//           else
+//               Op<0x03E5>("IN VEHICLE");
+//       }
+//   }
+//
+//   ON_MOD_LOAD()
+//   {
+//       Events::processScriptsEvent += []() { <<<Name>>>::Update(); };
+//       Events::restartGameEvent += []() { <<<Name>>>::ResetState(); };
+//       Events::initGameEvent    += []() { <<<Name>>>::ResetState(); };
+//       Events::reInitGameEvent  += []() { <<<Name>>>::ResetState(); };
+//   }
+//
+// -----------------------------------------------------------------------------
+// 2c. What happened, mapping by mapping
+// -----------------------------------------------------------------------------
+//
+//   CLEO                                  → C++
+//   --------------------------------------+-------------------------------------
+//   {$CLEO .csa} / 0000:                  → ON_MOD_LOAD() block
+//   :WAIT_PLAYER loop                     → not needed; the tick handles it
+//   0001: wait 500 ms                     → Reached() guard with TICK_MS = 500
+//   0256: player defined / 004D: jump     → if (!Op<0x0256>(0)) return;
+//   :MAIN label                           → Update() function body
+//   00D6: if / 044B: on_foot / 004D: jump → if (Op<0x044B>(...)) ...
+//   03E5: show_text_box "..."             → Op<0x03E5>("...");
+//   0002: jump @MAIN                      → falls through; the tick re-runs
+//   $PLAYER_ACTOR                          → -1 (local player)
+//
+// =============================================================================
+
+
+// =============================================================================
+// 3. CLEO → C++ TYPE MAPPING
+// =============================================================================
+//
+// CLEO variables are 32-bit cells. They can hold an integer, a float, or
+// a handle — the type depends on which opcode wrote them.
+//
+// To pick the C++ type of a CLEO local, look at the opcode that writes
+// it and apply the table below.
+//
+// -----------------------------------------------------------------------------
+// 3a. By opcode kind
+// -----------------------------------------------------------------------------
+//
+//   Opcode is...                              CLEO local holds...    C++ type
+//   ----------------------------------------+----------------------+------------
+//   GET_PLAYER_COORDINATES (00A0)            → float x, float y,    float
+//                                              float z
+//   GET_CAR_COORDINATES   (00AA)             → float x, float y,    float
+//                                              float z
+//   GET_GAME_TIMER        (01BD)             → milliseconds         uint32_t
+//   GET_CHAR_HEALTH       (0226)             → health               float
+//   GET_CAR_HEALTH        (0227)             → health               float
+//   IS_CHAR_IN_CAR        (00DB)             → boolean              bool
+//   IS_CHAR_ON_FOOT       (044B)             → boolean              bool
+//   STORE_WANTED_LEVEL    (01C0)             → wanted stars         int
+//   GET_PLAYER_CHAR       (01F5)             → ped handle           int
+//   GET_OFFSET_FROM_*     (04C4 / 0407)      → coords               CVector
+//   GET_CAR_MODEL         (0441)             → model id             int
+//   GET_RANDOM_INT_IN_RANGE (0209)           → integer              int
+//   LOAD_CUTSCENE         (02E4)             → no output            void
+//   CREATE_CAR            (00A5)             → car handle           int
+//   CREATE_OBJECT         (0107)             → object handle        int
+//
+// -----------------------------------------------------------------------------
+// 3b. By C++ use
+// -----------------------------------------------------------------------------
+//
+//   Used as...              C++ type
+//   -----------------------+----------------
+//   Coordinate              CVector (a struct of x, y, z floats)
+//   2D coordinate           CVector2D
+//   Time in ms              uint32_t
+//   Timer / countdown       uint32_t
+//   Handle (ped/car/obj)    int   — this is the game's pool index + uid
+//   Pointer                 CPlayerPed*, CVehicle*, CObject* — real C++ pointers
+//   Boolean                 bool
+//   Small integer           int
+//   Ammo / health           float for health, int for ammo counts
+//   Model id                int
+//
+// -----------------------------------------------------------------------------
+// 3c. The handle vs pointer distinction
+// -----------------------------------------------------------------------------
+//
+// CLEO talks in HANDLES. Every actor, car, and object is a 32-bit
+// integer the pool manager can turn into a pointer.
+//
+// AML can do either:
+//
+//   - Keep the integer handle. Use it with opcodes exactly as CLEO does.
+//     This is the safest path — identical semantics, no pointer risk.
+//
+//   - Resolve the pointer with the matching helper (FindPlayerPed,
+//     CPools::GetPed, CPools::GetVehicle, CPools::GetObject) and use the
+//     pointer for field access.
+//
+// The rule of thumb:
+//
+//   - If the source script only passes the handle to other opcodes,
+//     KEEP THE HANDLE. Do not convert it to a pointer.
+//
+//   - If the source script needs to read a field that has no opcode
+//     equivalent, resolve to a pointer, read the field, and let the
+//     handle die at end of scope.
+//
+// Never mix the two. A handle passed where a pointer is expected crashes
+// silently; a pointer passed where a handle is expected crashes loudly.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 4. COMMON OPCODES — QUICK REFERENCE
+// =============================================================================
+//
+// The opcodes below appear in nearly every CLEO script. Their C++
+// argument shapes are given so the reader never has to guess.
+//
+// Argument order is given as it appears in a disassembly. Do not
+// reorder.
+//
+// -----------------------------------------------------------------------------
+// 4a. Player and coordinates
+// -----------------------------------------------------------------------------
+//
+//   0256  player defined      → bool      Op<0x0256>(int playerIndex)
+//   01F5  get player actor    → int       Op<0x01F5>(int playerIndex, int* outHandle)
+//   00A0  get actor coords    → CVector   Op<0x00A0>(int actor, float* x, float* y, float* z)
+//   00AA  get car coords      → CVector   Op<0x00AA>(int car, float* x, float* y, float* z)
+//   00AB  set car coords      → void      Op<0x00AB>(int car, float x, float y, float z)
+//   00A1  set actor coords    → void      Op<0x00A1>(int actor, float x, float y, float z)
+//   01BD  get game timer      → uint32    Op<0x01BD>(uint32* outMs)
+//
+// -----------------------------------------------------------------------------
+// 4b. Health and armour
+// -----------------------------------------------------------------------------
+//
+//   0226  get actor health    → float     Op<0x0226>(int actor, float* outHealth)
+//   0227  get car health      → float     Op<0x0227>(int car, float* outHealth)
+//   0223  set actor health    → void      Op<0x0223>(int actor, int health)
+//   0224  set car health      → void      Op<0x0224>(int car, int health)
+//   04DD  get actor armour    → float     Op<0x04DD>(int actor, float* outArmour)
+//   04DE  set actor armour    → void      Op<0x04DE>(int actor, int armour)
+//
+// -----------------------------------------------------------------------------
+// 4c. Weapons
+// -----------------------------------------------------------------------------
+//
+//   01B2  give actor weapon   → void      Op<0x01B2>(int actor, int weaponType, int ammo)
+//   01B9  set current weapon  → void      Op<0x01B9>(int actor, int weaponType)
+//   0470  get current weapon  → int       Op<0x0470>(int actor, int* outWeaponType)
+//   0555  remove weapon       → void      Op<0x0555>(int actor, int weaponType)
+//
+// -----------------------------------------------------------------------------
+// 4d. Vehicles
+// -----------------------------------------------------------------------------
+//
+//   00A5  create car          → int       Op<0x00A5>(int modelId, float x, float y, float z, int* outHandle)
+//   00A6  delete car          → void      Op<0x00A6>(int car)
+//   00DF  is actor in any car → bool      Op<0x00DF>(int actor)
+//   03C0  store car actor in  → int       Op<0x03C0>(int actor, int* outCar)
+//   0175  set car heading     → void      Op<0x0175>(int car, float heading)
+//   02AC  set car proofs      → void      Op<0x02AC>(int car, int bp, int fp, int ep, int cp, int mp)
+//
+// -----------------------------------------------------------------------------
+// 4e. Text and help
+// -----------------------------------------------------------------------------
+//
+//   03E5  show help box       → void      Op<0x03E5>(const char* gxtLabel)
+//   03E6  clear help          → void      Op<0x03E6>()
+//   00BE  clear prints        → void      Op<0x00BE>()
+//   033E  display text        → void      Op<0x033E>(float x, float y, const char* gxtLabel)
+//
+// -----------------------------------------------------------------------------
+// 4f. Conditions
+// -----------------------------------------------------------------------------
+//
+//   044B  is actor on foot    → bool      Op<0x044B>(int actor)
+//   00DB  is actor in car     → bool      Op<0x00DB>(int actor, int car)
+//   056D  does actor exist    → bool      Op<0x056D>(int actor)
+//   0118  is actor dead       → bool      Op<0x0118>(int actor)
+//   0256  player defined      → bool      Op<0x0256>(int playerIndex)
+//
+// =============================================================================
+
+
+// =============================================================================
+// 5. STATE-MACHINE TRANSLATION
+// =============================================================================
+//
+// Most non-trivial CLEO scripts are a state machine driven by one local
+// variable. The pattern in CLEO is:
+//
+//   :MAIN
+//   0001: wait 100 ms
+//   00D6: if
+//   0038: 0@ == 0
+//   004D: jump_if_false @STATE1
+//   <body of state 0>
+//   0004: 0@ = 1
+//   0002: jump @MAIN
+//
+//   :STATE1
+//   00D6: if
+//   0038: 0@ == 1
+//   004D: jump_if_false @STATE2
+//   <body of state 1>
+//   0004: 0@ = 2
+//   0002: jump @MAIN
+//
+//   :STATE2
+//   ...
+//
+// The C++ equivalent uses a static integer and a switch:
+//
+//   static int g_state = 0;
+//
+//   static void Update()
+//   {
+//       if (!Reached(...)) return;
+//
+//       switch (g_state)
+//       {
+//           case 0:
+//               <body of state 0>
+//               g_state = 1;
+//               break;
+//
+//           case 1:
+//               <body of state 1>
+//               g_state = 2;
+//               break;
+//
+//           case 2:
+//               ...
+//               break;
+//
+//           default:
+//               break;
+//       }
+//   }
+//
+// The mapping is mechanical:
+//
+//   - The CLEO local that drives the state becomes an int static.
+//   - Every `if (state == N)` chain becomes one case.
+//   - The transition `state = N+1` becomes the assignment at the end of
+//     the case.
+//   - The `jump @MAIN` at the end of each state is what the tick does
+//     naturally — it falls through to the end of Update() and re-runs
+//     next tick.
+//
+// When the source script uses more than one state variable, add one
+// static per variable and nest the switches in the same order the CLEO
+// ifs nest.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 6. HOW TO CONVERT, STEP BY STEP
+// =============================================================================
+//
+//   1. Read the source twice. The first pass identifies the entry gate,
+//      the main loop, and the state variables. The second pass enumerates
+//      every opcode.
+//
+//   2. Write the header comment block from the automatic AML template.
+//
+//   3. Fill in the includes. Start from the minimum block. Add one header
+//      per game class the .csa references.
+//
+//   4. Fill in the Op wrapper and the Reached helper verbatim from the
+//      automatic AML template.
+//
+//   5. Declare every state variable as a namespace static. Use the type
+//      table in section 3 to pick the C++ type.
+//
+//   6. Write ResetState(). Zero every static.
+//
+//   7. Write Update() as an empty stub first. Wire it up:
+//
+//          ON_MOD_LOAD()
+//          {
+//              Events::processScriptsEvent += []() { <<<Name>>>::Update(); };
+//              Events::restartGameEvent += []() { <<<Name>>>::ResetState(); };
+//              Events::initGameEvent    += []() { <<<Name>>>::ResetState(); };
+//              Events::reInitGameEvent  += []() { <<<Name>>>::ResetState(); };
+//          }
+//
+//      Build at this point. The mod should load and do nothing. If it
+//      does not load, the problem is in the skeleton, not the conversion.
+//
+//   8. Fill in Update() one opcode at a time. After every three or four
+//      opcodes, rebuild and reload.
+//
+//   9. If the script has more than one state, add the switch from
+//      section 5.
+//
+//  10. Run the verification checklist from the automatic AML template.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 7. WHEN STUCK — HOW TO VERIFY WITHOUT GUESSING
+// =============================================================================
+//
+// -----------------------------------------------------------------------------
+// 7a. I do not know the argument order of an opcode
+// -----------------------------------------------------------------------------
+//
+// Open the CLEO script's disassembly. The disassembly prints the opcode
+// name and the parameter string. The parameter string is the argument
+// list, in order.
+//
+// If you have only the compiled .csa and no disassembly, open it in SB
+// Mobile — the editor shows the opcode names and parameter list.
+//
+// Do not guess. If the disassembly is unavailable, the opcode is
+// UNVERIFIED and the mod must not be built.
+//
+// -----------------------------------------------------------------------------
+// 7b. I do not know the C++ type of an output
+// -----------------------------------------------------------------------------
+//
+// Look at the opcode's name. GET_* returns a value; STORE_* writes a
+// value; IS_* returns a bool. The rest of the type is in the name:
+//
+//   *_COORDINATES   → float x, float y, float z
+//   *_HEALTH        → float
+//   *_TIMER         → uint32
+//   *_WANTED_LEVEL  → int
+//   *_MODEL         → int
+//   *_MONEY         → int
+//   *_ANGLE         → float
+//
+// If the name is ambiguous, check the PSDK header for the CLEO opcode
+// list (`OpcodeCallerIDs.h`). The enum entry will tell you which source
+// opcode the ID maps to, and the source opcode's signature is documented
+// in the Sanny Builder opcode list.
+//
+// -----------------------------------------------------------------------------
+// 7c. The SDK does not declare a class I need
+// -----------------------------------------------------------------------------
+//
+// Do not invent the class. Do not reach for a raw offset. Find a script
+// opcode that returns the value instead.
+//
+// Example: the source needs CPed::m_nPedGroup. The SDK does not declare
+// it. Do not compute an offset. Use opcode 0x092B (GET_GROUP_MEMBER) —
+// the script VM already exposes group membership for the ped.
+//
+// If no opcode returns the value and the field is not in the SDK, the
+// value is UNVERIFIED and the mod must not be built.
+//
+// -----------------------------------------------------------------------------
+// 7d. My mod crashes on the first tick
+// -----------------------------------------------------------------------------
+//
+// The most common causes, in order:
+//
+//   1. The mod touched game state inside ON_MOD_LOAD. Move everything
+//      into Update().
+//
+//   2. A GET_* / STORE_* opcode is gated on the condition flag. Remove
+//      the gate — see the companion document section 4.
+//
+//   3. A ped, car, or object handle was passed where the source passed
+//      -1 or 0. Check the source. -1 means the local player in some
+//      opcodes and an invalid handle in others. Do not assume.
+//
+//   4. A model was used without streaming. Add CStreaming::RequestModel
+//      + LoadAllRequestedModels before the opcode.
+//
+//   5. A pointer was used where a handle was expected, or the reverse.
+//      See section 3c.
+//
+// -----------------------------------------------------------------------------
+// 7e. My mod does not crash but does nothing
+// -----------------------------------------------------------------------------
+//
+//   - Check the wait interval. A Reached() check with a huge target
+//     silently skips every tick.
+//
+//   - Check the ped-pointer reset. If the pointer changes every tick
+//     (it should not), the state reset wipes progress before it can
+//     accumulate.
+//
+//   - Check the opcode's return value. If the code gates on the return
+//     of a GET_* / STORE_* opcode, it will silently skip. Remove the
+//     gate.
+//
+//   - Check the state variable type. A CLEO local that holds a ped
+//     handle is an int. If you declared it as a pointer, the opcodes
+//     receive garbage.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 8. THE VERIFICATION CHECKLIST
+// =============================================================================
+//
+// Before returning the converted mod, verify every item.
+//
+//   [ ] Every opcode from the source appears exactly once.
+//   [ ] Every opcode from the source appears in the same order.
+//   [ ] Every opcode goes through the Op<ID> wrapper.
+//   [ ] Every 00D6 / 004D pair became a C++ if.
+//   [ ] Every 0001: wait <ms> became a Reached() check with the same
+//       interval.
+//   [ ] Every CLEO local that survives across the loop became a static.
+//   [ ] Every static is zeroed in ResetState().
+//   [ ] ResetState() is registered on all three session events.
+//   [ ] Update() contains the ped-pointer session check.
+//   [ ] No GET_* or STORE_* opcode is gated on the condition flag.
+//   [ ] No game state is touched inside ON_MOD_LOAD.
+//
+// =============================================================================
+
+
+// =============================================================================
+// 9. WHAT THIS DOCUMENT IS AND IS NOT
+// =============================================================================
+//
+// This document IS:
+//
+//   - A teaching template for converting .csa / .csi to AML.
+//   - A reference for the five substitutions every conversion uses.
+//   - A diagnostic guide for the common failure modes.
+//
+// This document IS NOT:
+//
+//   - A code file. The reader writes the code.
+//   - A complete opcode reference. It covers the ~25 opcodes that appear
+//     in nearly every script. Opcodes outside that set must be verified
+//     against the source disassembly.
+//   - A substitute for the companion document. The rules in the
+//     companion are authoritative when the two disagree.
+//
+// =============================================================================
+
+########## Cleo convert resource ##########
+
+You are converting a GTA: San Andreas Android CLEO script (.csa / .csi)
+into a native AML mod using the Op<ID> pattern over OpcodeCaller. Do not
+use SAUtils, do not use CALLSCM / DEFOPCODE, do not use Op<> templates,
+do not ship any CLEO file.
+
+=========================================================
+THE PATTERN — apply it exactly
+=========================================================
+
+1) Includes (exactly this set, in this order):
+
+    #include <mod/amlmod.h>
+    #include <android/log.h>
+    #include <aml-psdk/game_sa/Events.h>
+    #include <aml-psdk/game_sa/base/Timer.h>
+    #include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+    
+3) Mod declaration:
+
+    MYMOD(package.guid, ModName, 1.0, Author)
+    NEEDGAME(com.rockstargames.gtasa)
+
+4) The Op<ID> wrapper — mandatory, verbatim, inside the mod's namespace:
+
+    template <uint16_t ID, typename... Args>
+    static inline bool Op(Args... args)
+    {
+        OpcodeCaller::g_Script.m_pBaseIP =
+            OpcodeCaller::g_Script.m_pCurrentIP =
+                OpcodeCaller::g_ScriptBuffer;
+
+        OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+        return Command<ID>(args...);
+    }
+
+5) Wraparound-safe timing (mandatory for any wait / interval):
+
+    static inline bool Reached(uint32_t now, uint32_t target)
+    {
+        return static_cast<int32_t>(now - target) >= 0;
+    }
+
+6) Hook point — ALWAYS processScriptsEvent, never gameProcessEvent:
+
+    ON_MOD_LOAD()
+    {
+        Events::processScriptsEvent += []() { ModName::Update(); };
+        // optionally: Events::restartGameEvent += []() { ModName::OnRestart(); };
+        LOGI("loaded");
+    }
+
+=========================================================
+CONVERSION RULES — one opcode at a time
+=========================================================
+
+- Every 0xNNNN opcode in the source script becomes Op<0xNNNN>(...).
+- Argument order comes from the source disassembly verbatim. Never reorder.
+- 8xxx opcodes (NOT-prefixed) use the same argument string as their 0xxx
+  base opcode. The game's SCM handler clears the NOT flag internally.
+- Output variables (CLEO "v" params) become pointers to stack locals or
+  to namespace-scoped statics. Both work; the wrapper copies the VM's
+  result back through the pointer.
+- "0001: wait <ms>" becomes a u32 timestamp comparison using Reached().
+  Never use sleep, never busy-wait, never use now >= target (fails at
+  the 49.7-day u32 wrap).
+- The main loop (":LABEL / jump @LABEL") becomes the Update() function
+  that the processScriptsEvent callback invokes every frame. Timing
+  inside Update() reproduces the CLEO "wait" instruction.
+- Every CLEO local variable that persists across the loop becomes a
+  namespace-scoped static.
+- "00D6: if / 004D: jump_if_false" becomes a C++ if (!Op<...>(...))
+  return; or if (!Op<...>(...)) continue; depending on context.
+- Any leading "0256: player defined" check becomes an early return in
+  Update(); cache the player actor via "01F5: get_player_actor" only
+  when the source script does, and drop the cache on session restart.
+
+=========================================================
+STRICT RULES
+=========================================================
+
+- Do NOT use SAUtils, ISAUtils, ScriptCommand, CALLSCM, DEFOPCODE.
+- Do NOT use Op<0xNNNN> — that is a different, deprecated spelling.
+  Use Op<0xNNNN> only (the wrapper defined above).
+- Do NOT invent opcode numbers. If an opcode is not in the source
+  script, it is not in the mod.
+- Do NOT invent parameter orders. Take them from the disassembly.
+- Do NOT access game classes by field unless the source script uses an
+  opcode that would have done so; the opcode path is authoritative.
+  - Do NOT use Events::gameProcessEvent for opcode-driven work.
+- Do NOT read or write game state from ON_MOD_LOAD — the game is not
+  ready yet. Everything happens inside processScriptsEvent.
+- If the source script has a state machine, reproduce it exactly with
+  namespace-scoped statics and the same transition timings.
+- Preserve every wait value, every conditional, every teleport offset,
+  every parameter — the mod must behave identically to the CLEO source.
+
+=========================================================
+ANDROID.MK — use this template verbatim
+=========================================================
+
+    LOCAL_PATH := $(call my-dir)
+
+    ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+        ifneq ($(wildcard $(NDK_PROJECT_PATH)/main.cpp),)
+            LOCAL_PATH := $(NDK_PROJECT_PATH)
+        else ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+            LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+        else ifneq ($(wildcard $(CURDIR)/main.cpp),)
+            LOCAL_PATH := $(CURDIR)
+        else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+            LOCAL_PATH := $(CURDIR)/jni
+        else
+            $(error Cannot find main.cpp)
+        endif
+    endif
+
+    include $(CLEAR_VARS)
+    LOCAL_CPP_EXTENSION := .cpp .cc
+
+    ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
+        LOCAL_MODULE := <<<ModName>>>
+    else ifeq ($(TARGET_ARCH_ABI), arm64-v8a)
+        LOCAL_MODULE := <<<ModName>>>64
+    else
+        LOCAL_MODULE := <<<ModName>>>
+    endif
+
+    LOCAL_SRC_FILES := main.cpp
+
+    LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+                        $(LOCAL_PATH)/mod \
+                        $(LOCAL_PATH)/aml-psdk
+
+    LOCAL_CXXFLAGS += -O2 -DNDEBUG -std=c++17 -fvisibility=hidden
+    LOCAL_LDLIBS += -llog
+
+    include $(BUILD_SHARED_LIBRARY)
+
+Application.mk is:
+
+    APP_ABI       := armeabi-v7a arm64-v8a
+    APP_PLATFORM  := android-24
+    APP_STL       := c++_static
+    APP_CPPFLAGS  := -std=c++17
+
+=========================================================
+OUTPUT FORMAT
+=========================================================
+
+Produce exactly three files, each in its own fenced code block:
+
+  1. main.cpp       — the full conversion, with a header comment block
+                      explaining the mod and the pattern.
+  2. Android.mk     — the makefile above with <<<ModName>>> substituted.
+  3. Application.mk — the standard family file above.
+
+No additional files. No explanations between code blocks — only the
+three files, each labelled with its filename.
+
+=========================================================
+SOURCE CLEO SCRIPT TO CONVERT
+=========================================================
+
+<<<paste the full .csa / .csi source here, disassembled or as text>>>
+
+Events::restartGameEvent += []() { Mod::ResetState(); };
+Events::initGameEvent    += []() { Mod::ResetState(); };
+Events::reInitGameEvent  += []() { Mod::ResetState(); };
+
+########## CSI menu create (Settings Tab) ##########
+
+// =============================================================================
+// AML CSI MENU PATTERN — template
+// =============================================================================
+//
+// Use this template whenever a CLEO .csa / .csi script needs an in-game pause
+// menu button on AML. It combines:
+//
+//   - SAUtils menu API (AddSettingsTab / AddButton) — the ONLY part of SAUtils
+//     that is used. The crashing ScriptCommand path is never touched.
+//   - Op<ID> wrapper over OpcodeCaller — for any script opcode the button
+//     needs to run.
+//   - Config (MYMODCFG) with defaults for every setting.
+//   - Deferred execution: the button callback fires on the UI thread and only
+//     sets a flag; the actual work runs inside processScriptsEvent on the
+//     game thread.
+//   - Streaming pre-load: any model that will be used at runtime is requested
+//     and awaited before it is applied.
+//
+// Replace every <<<...>>> placeholder.
+//
+// =============================================================================
+
+#include <mod/amlmod.h>
+#include <mod/logger.h>
+#include <mod/config.h>
+
+#include <aml-psdk/game_sa/Events.h>
+#include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+#include <aml-psdk/game_sa/entity/PlayerPed.h>
+#include <aml-psdk/game_sa/other/Pools.h>
+#include <aml-psdk/game_sa/engine/Streaming.h>
+
+#include "SAUtils/isautils.h"
+
+#include <vector>
+
+MYMODCFG(<<<guid>>>, <<<Name>>>, <<<version>>>, <<<Author>>>)
+NEEDGAME(com.rockstargames.gtasa)
+
+// ISAUtils::sautils is the extern pointer declared at the bottom of
+// sautils.h. CALLSCM uses it internally. This pattern never invokes
+// CALLSCM — the pointer is only kept so the menu API has something to
+// receive from GetInterface.
+ISAUtils* sautils = nullptr;
+
+
+// =============================================================================
+// 1. Op<ID> — rulebook v2.6 §74
+// =============================================================================
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    OpcodeCaller::g_Script.m_pBaseIP =
+        OpcodeCaller::g_Script.m_pCurrentIP =
+            OpcodeCaller::g_ScriptBuffer;
+
+    OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+    return Command<ID>(args...);
+}
+
+
+// =============================================================================
+// 2. Config
+// =============================================================================
+struct <<<Entry>>> 
+{
+    int  <<<field1>>>;
+    int  <<<field2>>>;
+};
+
+static std::vector<<<Entry>>> g_Entries;
+
+static const <<<Entry>>> kDefaults[] =
+{
+    { <<<val1>>>, <<<val2>>> },
+    // ...
+};
+
+static constexpr int kDefaultCount =
+    sizeof(kDefaults) / sizeof(kDefaults[0]);
+
+static void LoadFromConfig()
+{
+    g_Entries.clear();
+
+    const int count = cfg->GetInt("Count", kDefaultCount, "<<<Section>>>");
+
+    for (int i = 1; i <= count; ++i)
+    {
+        char key1[32], key2[32], keyEnabled[32];
+        sprintf(key1,        "<<<Field1>>>%d", i);
+        sprintf(key2,        "<<<Field2>>>%d", i);
+        sprintf(keyEnabled,  "Entry%d_Enabled", i);
+
+        const <<<Entry>>>& fallback = kDefaults[(i - 1) % kDefaultCount];
+
+        const bool enabled = cfg->GetBool(keyEnabled, true, "<<<Section>>>");
+        if (!enabled)
+            continue;
+
+        const int v1 = cfg->GetInt(key1, fallback.<<<field1>>>, "<<<Section>>>");
+        const int v2 = cfg->GetInt(key2, fallback.<<<field2>>>, "<<<Section>>>");
+
+        g_Entries.push_back({ v1, v2 });
+    }
+
+    if (g_Entries.empty())
+        for (const auto& e : kDefaults)
+            g_Entries.push_back(e);
+
+    logger->Info("Loaded %d entries from config", (int)g_Entries.size());
+}
+
+
+// =============================================================================
+// 3. Deferred request flag
+//
+// SAUtils calls OnButtonPressed from the menu layer, which is not the game
+// thread. The callback only sets this flag. The real work runs on the next
+// processScriptsEvent tick, on the game thread, inside CTheScripts::Process.
+// =============================================================================
+static volatile bool g_bActionRequested = false;
+
+
+// =============================================================================
+// 4. The actual work — runs on the game thread.
+// =============================================================================
+static void PerformAction()
+{
+    CPlayerPed* player = FindPlayerPed(-1);
+    if (!player || g_Entries.empty())
+        return;
+
+    const int actorHandle = CPools::GetPedRef(player);
+    if (actorHandle <= 0)
+        return;
+
+    // -------------------------------------------------------------------------
+    // 4a. If the action uses model IDs, request and await them here.
+    //     Skipping this step causes a crash on first use because the game
+    //     will dereference an unloaded model.
+    // -------------------------------------------------------------------------
+    for (const auto& e : g_Entries)
+        CStreaming::RequestModel(e.<<<field1>>>, 2);   // 2 = high priority
+
+    CStreaming::LoadAllRequestedModels(false);
+
+    // -------------------------------------------------------------------------
+    // 4b. Apply via Op<ID>. Never write to game-class fields directly unless
+    //     you have verified the field's semantics and side effects.
+    // -------------------------------------------------------------------------
+    for (const auto& e : g_Entries)
+    {
+        logger->Info("applying entry %d %d", e.<<<field1>>>, e.<<<field2>>>);
+
+        Op<0x<<<opcode>>>>(actorHandle, e.<<<field1>>>, e.<<<field2>>>);
+    }
+
+    // -------------------------------------------------------------------------
+    // 4c. Do NOT call SetModelIsDeletable on any model the player will use
+    //     later. The model must stay resident for the rest of the session.
+    // -------------------------------------------------------------------------
+
+    logger->Info("Action served (%d entries)", (int)g_Entries.size());
+}
+
+
+// =============================================================================
+// 5. Menu button callback — UI thread only. Must be trivial.
+// =============================================================================
+static void OnActionButton(uintptr_t)
+{
+    g_bActionRequested = true;
+}
+
+
+// =============================================================================
+// 6. Entry
+// =============================================================================
+ON_MOD_LOAD()
+{
+    logger->SetTag("<<<TAG>>>");
+
+    // -------------------------------------------------------------------------
+    // 6a. Bind and save defaults, then load.
+    // -------------------------------------------------------------------------
+    cfg->Bind("Count", kDefaultCount, "<<<Section>>>");
+
+    for (int i = 1; i <= kDefaultCount; ++i)
+    {
+        char key1[32], key2[32], keyEnabled[32];
+        sprintf(key1,        "<<<Field1>>>%d", i);
+        sprintf(key2,        "<<<Field2>>>%d", i);
+        sprintf(keyEnabled,  "Entry%d_Enabled", i);
+
+        cfg->Bind(key1,       kDefaults[i-1].<<<field1>>>, "<<<Section>>>");
+        cfg->Bind(key2,       kDefaults[i-1].<<<field2>>>, "<<<Section>>>");
+        cfg->Bind(keyEnabled, true,                        "<<<Section>>>");
+    }
+
+    cfg->Save();
+    LoadFromConfig();
+
+    // -------------------------------------------------------------------------
+    // 6b. Deferred execution tick — always register before the SAUtils
+    //     check, so the mod still runs even if SAUtils is missing.
+    // -------------------------------------------------------------------------
+    Events::processScriptsEvent += []()
+    {
+        if (g_bActionRequested)
+        {
+            g_bActionRequested = false;
+            PerformAction();
+        }
+    };
+
+    // -------------------------------------------------------------------------
+    // 6c. Menu tab.
+    // -------------------------------------------------------------------------
+    sautils = (ISAUtils*)GetInterface("SAUtils");
+    if (!sautils)
+    {
+        logger->Error("SAUtils not found — pause-menu tab will not appear. "
+                      "Rest of the mod is loaded.");
+        return;
+    }
+
+    const eTypeOfSettings tab =
+        sautils->AddSettingsTab("<<<TabName>>>", "menu_mainsettings");
+
+    sautils->AddButton(tab, "<<<ButtonLabel>>>", OnActionButton);
+
+    logger->Info("Menu tab created");
+}
+
+########## CSI button pause menu option ##########
+
+// =============================================================================
+// AML CSI MENU PATTERN — pause-menu variant
+// =============================================================================
+//
+// Same as the standard AML CSI Menu Pattern, except the action is a button
+// placed directly on the pause menu instead of a tab in the settings page.
+//
+// API used:
+//     sautils->AddSettingsTabButton(name, fn, STB_Pause, texture, data);
+//
+// Requirements:
+//     SAUtils >= 1.4.1 (the version this API was introduced in).
+//
+// =============================================================================
+
+#include <mod/amlmod.h>
+#include <mod/logger.h>
+#include <mod/config.h>
+
+#include <aml-psdk/game_sa/Events.h>
+#include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+#include <aml-psdk/game_sa/entity/PlayerPed.h>
+#include <aml-psdk/game_sa/other/Pools.h>
+#include <aml-psdk/game_sa/engine/Streaming.h>
+
+#include "SAUtils/isautils.h"
+
+#include <vector>
+
+MYMODCFG(<<<guid>>>, <<<Name>>>, <<<version>>>, <<<Author>>>)
+NEEDGAME(com.rockstargames.gtasa)
+
+ISAUtils* sautils = nullptr;
+
+
+// =============================================================================
+// 1. Op<ID> — rulebook v2.6 §74
+// =============================================================================
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    OpcodeCaller::g_Script.m_pBaseIP =
+        OpcodeCaller::g_Script.m_pCurrentIP =
+            OpcodeCaller::g_ScriptBuffer;
+
+    OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+    return Command<ID>(args...);
+}
+
+
+// =============================================================================
+// 2. Config
+// =============================================================================
+struct <<<Entry>>>
+{
+    int  <<<field1>>>;
+    int  <<<field2>>>;
+};
+
+static std::vector<<<Entry>>> g_Entries;
+
+static const <<<Entry>>> kDefaults[] =
+{
+    { <<<val1>>>, <<<val2>>> },
+    // ...
+};
+
+static constexpr int kDefaultCount =
+    sizeof(kDefaults) / sizeof(kDefaults[0]);
+
+static void LoadFromConfig()
+{
+    g_Entries.clear();
+
+    const int count = cfg->GetInt("Count", kDefaultCount, "<<<Section>>>");
+
+    for (int i = 1; i <= count; ++i)
+    {
+        char key1[32], key2[32], keyEnabled[32];
+        sprintf(key1,       "<<<Field1>>>%d",   i);
+        sprintf(key2,       "<<<Field2>>>%d",   i);
+        sprintf(keyEnabled, "Entry%d_Enabled",  i);
+
+        const <<<Entry>>>& fallback = kDefaults[(i - 1) % kDefaultCount];
+
+        const bool enabled = cfg->GetBool(keyEnabled, true, "<<<Section>>>");
+        if (!enabled)
+            continue;
+
+        const int v1 = cfg->GetInt(key1, fallback.<<<field1>>>, "<<<Section>>>");
+        const int v2 = cfg->GetInt(key2, fallback.<<<field2>>>, "<<<Section>>>");
+
+        g_Entries.push_back({ v1, v2 });
+    }
+
+    if (g_Entries.empty())
+        for (const auto& e : kDefaults)
+            g_Entries.push_back(e);
+
+    logger->Info("Loaded %d entries from config", (int)g_Entries.size());
+}
+
+
+// =============================================================================
+// 3. Deferred request flag
+//
+// The pause-menu callback fires on the UI thread. It only sets this flag.
+// The work runs on the next processScriptsEvent tick, on the game thread.
+// =============================================================================
+static volatile bool g_bActionRequested = false;
+
+
+// =============================================================================
+// 4. The actual work — runs on the game thread.
+// =============================================================================
+static void PerformAction()
+{
+    CPlayerPed* player = FindPlayerPed(-1);
+    if (!player || g_Entries.empty())
+        return;
+
+    const int actorHandle = CPools::GetPedRef(player);
+    if (actorHandle <= 0)
+        return;
+
+    // 4a. If the action uses model IDs, request and await them.
+    for (const auto& e : g_Entries)
+        CStreaming::RequestModel(e.<<<field1>>>, 2);
+
+    CStreaming::LoadAllRequestedModels(false);
+
+    // 4b. Apply via Op<ID>.
+    for (const auto& e : g_Entries)
+    {
+        logger->Info("applying entry %d %d", e.<<<field1>>>, e.<<<field2>>>);
+        Op<0x<<<opcode>>>>(actorHandle, e.<<<field1>>>, e.<<<field2>>>);
+    }
+
+    // 4c. Do NOT call SetModelIsDeletable on any model the player will use.
+
+    logger->Info("Action served (%d entries)", (int)g_Entries.size());
+}
+
+
+// =============================================================================
+// 5. Pause-menu button callback — UI thread only.
+//
+// Signature: SimpleDataFn = void (*)(void* data)
+// The `data` pointer is what you passed to AddSettingsTabButton.
+// =============================================================================
+static void OnActionButton(void* /*data*/)
+{
+    g_bActionRequested = true;
+}
+
+
+// =============================================================================
+// 6. Entry
+// =============================================================================
+ON_MOD_LOAD()
+{
+    logger->SetTag("<<<TAG>>>");
+
+    // 6a. Config.
+    cfg->Bind("Count", kDefaultCount, "<<<Section>>>");
+
+    for (int i = 1; i <= kDefaultCount; ++i)
+    {
+        char key1[32], key2[32], keyEnabled[32];
+        sprintf(key1,       "<<<Field1>>>%d",   i);
+        sprintf(key2,       "<<<Field2>>>%d",   i);
+        sprintf(keyEnabled, "Entry%d_Enabled",  i);
+
+        cfg->Bind(key1,       kDefaults[i-1].<<<field1>>>, "<<<Section>>>");
+        cfg->Bind(key2,       kDefaults[i-1].<<<field2>>>, "<<<Section>>>");
+        cfg->Bind(keyEnabled, true,                        "<<<Section>>>");
+    }
+
+    cfg->Save();
+    LoadFromConfig();
+
+    // 6b. Deferred execution tick. Always register before the SAUtils check,
+    //     so the mod still functions even if SAUtils is unavailable.
+    Events::processScriptsEvent += []()
+    {
+        if (g_bActionRequested)
+        {
+            g_bActionRequested = false;
+            PerformAction();
+        }
+    };
+
+    // 6c. Pause-menu button.
+    sautils = (ISAUtils*)GetInterface("SAUtils");
+    if (!sautils)
+    {
+        logger->Error("SAUtils not found — pause-menu button will not appear. "
+                      "Rest of the mod is loaded.");
+        return;
+    }
+
+    sautils->AddSettingsTabButton(
+        "<<<ButtonLabel>>>",   // text shown on the pause menu
+        OnActionButton,         // callback
+        STB_Pause,              // where: STB_MainMenu / STB_Pause / STB_StartGame / STB_Settings
+        "menu_mainsettings",    // texture from mobile.txt texdb
+        nullptr                 // opaque pointer passed through to callback
+    );
+
+    logger->Info("Pause-menu button created");
+}

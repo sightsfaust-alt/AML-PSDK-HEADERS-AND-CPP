@@ -1,0 +1,124 @@
+San Andreas
+│
+├── Los Santos                                    ← weather region 1
+│   │
+│   ├── Los Santos (city)
+│   │   ├── Ganton
+│   │   │   └── Grove Street
+│   │   ├── Idlewood
+│   │   ├── Jefferson
+│   │   ├── Glen Park
+│   │   ├── Willowfield
+│   │   ├── Playa del Seville
+│   │   ├── Verona Beach
+│   │   ├── Santa Maria Beach
+│   │   ├── Marina
+│   │   ├── Los Flores
+│   │   ├── Las Colinas
+│   │   ├── East Beach
+│   │   ├── East Los Santos
+│   │   ├── Temple
+│   │   ├── Downtown Los Santos
+│   │   ├── Verdant Bluffs
+│   │   ├── Market
+│   │   ├── Commerce
+│   │   ├── Pershing Square
+│   │   ├── Conference Center
+│   │   ├── Rodeo
+│   │   ├── Mulholland
+│   │   ├── Richman
+│   │   ├── Vinewood
+│   │   ├── Ocean Docks
+│   │   └── Los Santos International Airport
+│   │
+│   └── Red County
+│       ├── Dillimore
+│       ├── Blueberry
+│       ├── Palomino Creek
+│       ├── Montgomery
+│       ├── Hilltop Farm
+│       ├── Fallen Tree
+│       └── The Panopticon
+│
+├── San Fierro                                    ← weather region 2
+│   │
+│   ├── San Fierro (city)
+│   │   ├── Doherty
+│   │   ├── Juniper Hollow
+│   │   ├── Juniper Hill
+│   │   ├── Hashbury
+│   │   ├── Queens
+│   │   ├── King's
+│   │   ├── Garcia
+│   │   ├── Battery Point
+│   │   ├── Esplanade East
+│   │   ├── Esplanade North
+│   │   ├── Ocean Flats
+│   │   ├── Palisades
+│   │   ├── Santa Flora
+│   │   ├── Chinatown
+│   │   ├── Downtown San Fierro
+│   │   ├── Foster Valley
+│   │   ├── Missionary Hill
+│   │   ├── Calton Heights
+│   │   ├── Financial District
+│   │   ├── Garcia Park
+│   │   └── Easter Bay Airport
+│   │
+│   ├── Flint County
+│   │   ├── Flint Range
+│   │   ├── Flint Water
+│   │   ├── Flint Intersection
+│   │   ├── Los Santos Badlands (The Badlands)
+│   │   └── San Fierro Badlands
+│   │
+│   └── Whetstone
+│       ├── Angel Pine
+│       ├── Mount Chiliad
+│       ├── Whetstone Ridge
+│       ├── Back o' Beyond
+│       └── Shady Creek
+│
+├── Las Venturas                                  ← weather region 3
+│   │
+│   └── Las Venturas (city)
+│       ├── The Strip
+│       ├── Old Venturas Strip
+│       ├── Redsands East
+│       ├── Redsands West
+│       ├── Whitewood Estates
+│       ├── Rockshore East
+│       ├── Rockshore West
+│       ├── Come-A-Lot
+│       ├── Camel's Toe
+│       ├── The Emerald Isle
+│       ├── Royal Casino
+│       ├── Pilgrim
+│       ├── Spinybed
+│       ├── Prickle Pine
+│       ├── Linden Station
+│       ├── Yellow Bell Station
+│       ├── Greenglass College
+│       ├── K.A.C.C. Military Fuels
+│       ├── Julius Thruway
+│       ├── Downtown Las Venturas
+│       └── Las Venturas Airport
+│
+└── Desert                                        ← weather region 4
+    │
+    ├── Bone County
+    │   ├── Las Barrancas
+    │   ├── Fort Carson
+    │   ├── Las Payasadas
+    │   ├── El Castillo del Diablo
+    │   ├── Verdant Meadows
+    │   ├── Area 69 (Restricted Area)
+    │   └── The Big Ear
+    │
+    └── Tierra Robada
+        ├── Bayside
+        ├── Bayside Marina
+        ├── El Quebrados
+        ├── Aldea Malvada
+        ├── Sherman Dam
+        └── Las Brujas

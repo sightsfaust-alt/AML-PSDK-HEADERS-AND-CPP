@@ -1,0 +1,1026 @@
+================================================================================
+AML MOD DEVELOPMENT — LESSONS LEARNED, SESSION DIARY & DEEP ANALYSIS
+Historical diary of what worked / failed, lessons, fixes catalogue,
+and the deep memorization / consolidated understanding document.
+================================================================================
+
+CONTENTS:
+- AML MOD DEVELOPMENT - SESSION DIARY & HANDBOOK
+- LESSONS LEARNED & FIXES
+- Deep Analysis & Memorization
+================================================================================
+
+########## SESSION DIARY & HANDBOOK ##########
+
+AML MOD DEVELOPMENT — SESSION DIARY & HANDBOOK
+
+Author: Wazitech
+Project family: GTA: San Andreas Android AML mods
+Period covered: This session — from first CLEO conversion attempts to a stable, repeatable pattern
+Purpose: Preserve everything learned, including the wrong turns, so the next mod starts from the finish line.
+
+---
+
+TABLE OF CONTENTS
+
+1. Prologue — how this started
+2. The journey — chronological diary
+3. The winning pattern — Op<ID> over OpcodeCaller
+4. Session robustness — the rule that ended the "stops on new game" bug
+5. Every mod we built and what happened to it
+6. Every error we hit and how we fixed it
+7. The build system that works
+8. What to do — checklist for every new mod
+9. What NOT to do — the graveyard of failed approaches
+10. Final principles
+
+---
+
+1. PROLOGUE
+
+We started with a folder of AML-PSDK headers and a handful of CLEO .csa scripts that the user wanted to convert to native AML mods. The goal was always the same: take a working CLEO script and produce a .so that does the same thing without needing CLEO installed.
+
+What looked straightforward at first turned into a real engineering exercise. Every wrong turn taught us something. Every crash log pointed at a specific cause. The final pattern is small, boring, and correct — which is exactly what we wanted.
+
+---
+
+2. THE JOURNEY
+
+Day 1 — First contact
+
+This is the step that separated every working mod from every failed one.
+
+1. Search OpcodeCallerIDs.h for the operation name.
+The file lists every opcode by name. Grep before writing. RESTRICT, RESTART, PENALTY, BUST, DEATH, MILITARY — three seconds each.
+
+2. Open the class header that names the field.
+Ped.h for ped state, PlayerInfo.h for player state, Vehicle.h for vehicle state, World.h for the Players[] array. Read the class body. Do not read from memory.
+
+3. Trace the dependency chain of every header you include.
+PlayerInfo.h embeds CPlayerData by value, so PlayerData.h is a hard include. PlayerData.h forward-declares CWanted, CPedClothesDesc, CCopPed — if you touch those through it, you need headers that may not be in your tree. Note what is forward-declared and stop if the definition is missing.
+
+We loaded the PSDK headers. Long list of files under aml-psdk/, mod/, SAUtils/. The first conversions looked plausible but were untested.
+
+First wrong assumption: that SAUtils CALLSCM / DEFOPCODE was the natural conversion path for CLEO opcodes, since it literally has "CLEO" in its history.
+
+Day 1 (later) — First crash logs
+
+Two crash logs arrived from the user, both showing SIGABRT raised from inside libProtectHomies64.so. The fault was inside the mod's own code, not the game. The stack trace ended at libc.so + 0xB0C7C (abort).
+
+Diagnosis: stack canary failure from varargs misuse in ISAUtils::ScriptCommand. SAUtils' own header warns about this exact thing — pointer arguments can corrupt the stack because the vararg reader and the C++ ABI disagree on argument widths for certain type letters.
+
+First fix attempt: change the DEFOPCODE parameter string from ibbbbb to iiiiii. This is a common workaround.
+
+Result: still crashed. Same stack. Same abort.
+
+Day 2 — The realisation
+
+The problem was not the parameter string. The problem was the entire SAUtils ScriptCommand mechanism on this build. The user's earlier TPH_UNIFIED conversion had already used OpcodeCaller successfully — it was right there in the codebase, working, and we had been ignoring it in favour of SAUtils.
+
+Decision: abandon SAUtils for opcode execution. Keep it only for the pause-menu button API. Reconvert everything to Op<ID> over OpcodeCaller.
+
+Day 2 (later) — The Op<ID> pattern emerges
+
+Looked at OpcodeCaller.h. Realised that Command<ID> already does the right thing — it's a template-based opcode dispatcher with no varargs. The only missing piece was resetting m_pBaseIP and m_pCurrentIP before every command, because the constructor sets them exactly once.
+
+The wrapper was born:
+
+```cpp
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    OpcodeCaller::g_Script.m_pBaseIP =
+        OpcodeCaller::g_Script.m_pCurrentIP =
+            OpcodeCaller::g_ScriptBuffer;
+    OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+    return Command<ID>(args...);
+}
+```
+
+Three lines. Everything that follows in this diary is built on them.
+
+Day 3 — Session robustness
+
+The user reported that mods stopped working after starting a new game. Investigation revealed the "once-per-session" flags that every mod used were set once and never reset.
+
+Root cause: restartGameEvent fires on some session transitions but not all. Loading a save uses reInitGameEvent. Launching the app uses initGameEvent. And none of them fire when the user simply dies and respawns.
+
+Fix: three-layer reset.
+
+1. Register ResetState() on all three session events (restart, init, reInit).
+2. Also detect ped-pointer changes inside Update() — the player ped pointer changes on every session boundary, regardless of which engine path was taken.
+3. Reset on the "no player" branch too (menu, loading) so the next valid ped is treated as new.
+
+Result: mods now run from app launch to app exit across any number of sessions without an app restart.
+
+Day 3 (later) — Small quality fixes
+
+· Edge-triggered writes. Ammo, health, accuracy, proofs — write only when the current value is below target, never unconditionally per tick. The old code was resetting m_nTimeForNextShot = 0 every 50 ms, which turned every weapon full-auto.
+· Streaming pre-load. CStreaming::RequestModel + LoadAllRequestedModels before any model-dependent opcode. Without it, the game crashes on first use of a not-yet-loaded weapon.
+· Never call SetModelIsDeletable on models the player will use. The streaming system evicts them and reintroduces the crash.
+
+Day 4 — Menu pattern crystallised
+
+Two menu variants established:
+
+Settings-tab variant (SAUtils >= 1.3):
+
+```cpp
+eTypeOfSettings tab = sautils->AddSettingsTab("TabName", "menu_mainsettings");
+sautils->AddButton(tab, "Button Label", OnButtonPressed);   // void(*)(uintptr_t)
+```
+
+Pause-menu variant (SAUtils >= 1.4.1):
+
+```cpp
+sautils->AddSettingsTabButton(
+    "Button Label",
+    OnButtonPressed,     // void(*)(void*)
+    STB_Pause,
+    "menu_mainsettings",
+    nullptr);
+```
+
+Both use the same deferred-execution pattern: the button callback only sets a flag; the flag is consumed in processScriptsEvent on the game thread.
+
+Day 4 (later) — The wrong task-detection approach
+
+Tried using CTaskManager task types to identify recruited gang members. Multiple attempts, all failed:
+
+· TASK_COMPLEX_BE_IN_GROUP — every world gangster runs it in their own group. False positives everywhere.
+· TASK_COMPLEX_FOLLOW_LEADER_IN_FORMATION — appears briefly during task transitions. Still false positives.
+· Consecutive-ticks tracker — missed real recruits because a recruited follower switches sub-tasks constantly.
+
+Conclusion: there is no reliable way to identify a recruited member without CPed::m_nPedGroup, which is not declared in the SDK. The only correct path is Op<0x092B> — the game's own group lookup.
+
+Lesson: when the game already has a script opcode that answers a question, use the opcode. Do not try to answer it by inspecting C++ state from native code.
+
+Day 5 — The final freeze
+
+Everything working:
+
+· ProtectHomies, TPH_UNIFIED, QTRGT, GMCE, WastedBustedEffect — all opcode-driven via Op<ID>.
+· VSFBC, UTMP, FIGHT, REMOVEMARKER, RESTORE, DamageFX, UNIVERSAL_WEAPON — pure PSDK (FULL NATIVE).
+· WCSFN, SAVER — pause-menu button + opcode action, using SAUtils only for the menu API.
+
+The pattern is stable. The rest of this document is the reference.
+
+---
+
+3. THE WINNING PATTERN — Op<ID>
+
+The wrapper (memorise this)
+
+```cpp
+#include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    OpcodeCaller::g_Script.m_pBaseIP =
+        OpcodeCaller::g_Script.m_pCurrentIP =
+            OpcodeCaller::g_ScriptBuffer;
+
+OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+return Command<ID>(args...);
+}
+```
+
+Why each line matters
+
+Line Purpose What happens without it
+template <uint16_t ID> Opcode number is compile-time Varargs dispatch → stack corruption (the original SAUtils crash)
+m_pBaseIP = m_pCurrentIP = g_ScriptBuffer Reset VM pointer before every command Second opcode reads its bytes from wherever the first left the pointer
+m_bWastedBustedCheck = true Match the flag CRunningScript::Init sets Some opcodes behave differently on non-mission scripts
+return Command<ID>(args...) Return the VM's condition flag Nothing to test in if branches
+
+The hook point
+
+```cpp
+ON_MOD_LOAD()
+{
+    Events::processScriptsEvent += []() { Mod::Update(); };
+}
+```
+
+Always processScriptsEvent, never gameProcessEvent, for opcode-driven work. processScriptsEvent fires inside CTheScripts::Process on the game thread, when the VM state is fully consistent. gameProcessEvent fires earlier in the frame, before some of that state is re-established.
+
+Wraparound-safe timing
+
+```cpp
+static inline bool Reached(uint32_t now, uint32_t target)
+{
+    return static_cast<int32_t>(now - target) >= 0;
+}
+```
+
+Never now >= target. Fails across the u32 wrap at 49.7 days.
+
+Output parameters
+
+Outputs go through pointers to stack locals or namespace-scoped statics. OpcodeCaller copies the VM's result back through the pointer after ProcessOneCommand returns.
+
+---
+
+4. SESSION ROBUSTNESS — THE THREE LAYERS
+
+Every mod must survive: new game, save load, in-game restart, death + respawn, autoload, checkpoint return.
+
+Layer 1 — session events
+
+```cpp
+ON_MOD_LOAD()
+{
+    Events::restartGameEvent += []() { Mod::ResetState(); };
+    Events::initGameEvent    += []() { Mod::ResetState(); };
+    Events::reInitGameEvent  += []() { Mod::ResetState(); };
+}
+```
+
+Three distinct engine code paths. Register all three. Registering only restartGameEvent leaves initGameEvent (app launch) and reInitGameEvent (load save) unhandled.
+
+Layer 2 — ped pointer check inside Update()
+
+```cpp
+static CPlayerPed* g_LastPlayer = nullptr;
+
+static void Update()
+{
+    CPlayerPed* player = FindPlayerPed(-1);
+
+if (!player)
+    {
+        g_LastPlayer = nullptr;
+        return;
+    }
+
+if (player != g_LastPlayer)
+    {
+        g_LastPlayer = player;
+        // full reset of all mod-specific state
+    }
+
+// do work
+}
+```
+
+The ped pointer changes on every session boundary. This catches any path the events might miss.
+
+Layer 3 — reset on "no player"
+
+Menu, load screen, between death and respawn — clear the marker so the next valid ped is treated as new.
+
+ResetState() function
+
+Every mod has one. It zeroes flags, timestamps, cached handles, vectors. It must not touch the Op<ID> wrapper, the tick logic, or the opcode sequence.
+
+---
+
+5. EVERY MOD WE BUILT
+
+Opcode-driven (FULL NATIVE via Op<ID>)
+
+Mod Purpose Key opcodes
+ProtectHomies Full damage immunity to recruited gang members 02AB, 092B, 056D, 8118, 07AF, 0256
+TPH_UNIFIED Teleport recruited members back to the player when >50 m away 04C4, 00A1, 092B, 056D, 044B, 8118, 8104, 0256, 01F5, 07AF
+GMCE Configure recruited members' AI + give them the player's weapon 02A9, 07CB, 02E2, 07DD, 087F, 0526, 0446, 0946, 01B2, 0470, 092B, 07AF, 0256, 01F5, 056D
+QTRGT Teleport recruited members into the same interior as the player 0256, 01F5, 077E, 00A0, 092B, 056D, 0860, 00A1, 07AF
+WastedBustedEffect Thermal vision on death, night vision on arrest, with timing 03CB, 00A1, 08B1, 08B2, 0118, 0741
+Acquainta Global ped-type relationship matrix 0746
+STATS Apply stat values once per session 0629, 062A, 0627, 0702, 0703, 07A6, 08E1
+
+Pause-menu button (SAUtils menu + Op<ID> action)
+
+Mod Button Action
+WCSFN "Give All Weapons" Streams 11 weapon models, gives each via 01B2
+SAVER "SAVE GAME" Opens the game's native save screen via 03D8
+
+Pure PSDK (FULL NATIVE, no opcodes)
+
+Mod Purpose
+VSFBC Hardens the player's vehicle (proofs, no tyre burst, health 1000, watertight, etc.)
+UTMP Player stats preset (proofs, accuracy, ammo, fast reload, no death penalty)
+FIGHT Sets the player's fighting style to Kung Fu with 6 moves
+REMOVEMARKER Clears the waypoint blip when the player is within 20 m
+RESTORE Combines passive regen, snapshot restore, and armour boost
+DamageFX Red screen flash + fade + camera shake on player damage
+UNIVERSAL_WEAPON Damage multiplier, infinite ammo, no spread, move-while-shooting, etc.
+
+---
+
+6. EVERY ERROR WE HIT AND HOW WE FIXED IT
+
+Error 1 — undefined symbol: sautils
+
+Where: during link, after using SAUtils CALLSCM.
+Cause: sautils.h declares extern ISAUtils* sautils; but does not define it. The definition lives in SAUtils' own .so which the mod does not link against.
+Fix: define ISAUtils* sautils = nullptr; at file scope in the mod's .cpp. This is now only needed for menu API use.
+
+Error 2 — SIGABRT raised from inside the mod's own .so
+
+Where: runtime, when calling ISAUtils::ScriptCommand with pointer arguments.
+Cause: SAUtils uses C varargs. Its vararg reader and the C++ ABI disagree on argument widths for certain type letters (b in particular). The stack frame gets corrupted; the stack canary check fails; abort() is called.
+Fix: do not use SAUtils ScriptCommand / CALLSCM / DEFOPCODE. Use Op<ID> over OpcodeCaller instead.
+
+
+Error 4 — error: member access into incomplete type 'CBike'
+
+Where: compile time, when accessing vehicle->AsBike()->bWaterTight.
+Cause: Vehicle.h forward-declares CBike, CAutomobile, etc. Accessing members requires the full class definition.
+Fix: add #include <aml-psdk/game_sa/entity/Bike.h> (or Automobile.h, etc.).
+
+Error 5 — error: member access into incomplete type 'CPlayerData'
+
+Where: compile time, when accessing player->m_pPlayerData->m_bGroupStuffDisabled.
+Cause: Ped.h forward-declares CPlayerData.
+Fix: add #include <aml-psdk/game_sa/other/PlayerData.h>.
+
+
+Where: compile time.
+Cause: same as Error 3.
+Fix: same as Error 3.
+
+Error 7 — undefined symbol: aml
+
+Where: link time. Hundreds of references from PSDK headers.
+Cause: the MYMOD / MYMODCFG macro was missing. That macro is what defines IAML* aml = nullptr; in the translation unit. Without it, aml is declared extern but never defined.
+Fix: add MYMOD(...) or MYMODCFG(...) at file scope.
+
+Error 8 — No rule to make target 'main.cpp' (NDK's own build/core/main.cpp)
+
+Where: build time.
+Cause: AML Companion's ndk-build wrapper leaks $(call my-dir) to the NDK's own build/core directory.
+Fix: add the LOCAL_PATH guard at the top of Android.mk:
+
+```makefile
+LOCAL_PATH := $(call my-dir)
+ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+    ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+        LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+    else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+        LOCAL_PATH := $(CURDIR)/jni
+    else ifneq ($(wildcard $(NDK_PROJECT_PATH)/main.cpp),)
+        LOCAL_PATH := $(NDK_PROJECT_PATH)
+    else ifneq ($(wildcard $(CURDIR)/main.cpp),)
+        LOCAL_PATH := $(CURDIR)
+    else
+        $(error Cannot find main.cpp)
+    endif
+endif
+```
+
+Error 9 — my-dir returns build/core
+
+Where: build time.
+Cause: same as Error 8, different symptom.
+Fix: same as Error 8.
+
+Error 10 — called object type 'u8' is not a function
+
+Where: compile time, when writing CDraw::FadeValue().
+Cause: Draw.h uses DECL_VALUE_PLT_U8 which declares a static proxy object named FadeValue and a macro #define FadeValue FadeValue(). Writing CDraw::FadeValue() becomes CDraw::FadeValue()() — calling the u8& returned by the first call.
+Fix: access the underlying value through the proxy's static Get():
+
+```cpp
+CDraw::ValueProxy_FadeValue::Get()
+```
+
+Error 11 — Session state stuck on new game
+
+Where: runtime.
+Cause: once-per-session flags were set to true and never reset. restartGameEvent did not fire on every session-entry path.
+Fix: the three-layer session reset described in Section 4.
+
+Error 12 — Weapon deployment crash on first use
+
+Where: runtime, when the player fires a newly-given weapon.
+Cause: the weapon was added to the inventory via 01B2 without first streaming the weapon's model. The game dereferenced a NULL model pointer on first render.
+Fix: CStreaming::RequestModel(modelId, 2) then CStreaming::LoadAllRequestedModels(false) before the 01B2 calls. Never call SetModelIsDeletable on models the player will use.
+
+Error 13 — Top-up every tick / ammo counter flickers / weapons become full-auto
+
+Where: runtime.
+Cause: a per-tick loop unconditionally wrote m_nAmmoTotal, m_nAmmoInClip, m_nTimeForNextShot = 0, m_nState, m_nWeaponAccuracy, m_nWeaponShootingRate. Resetting m_nTimeForNextShot every 50 ms bypassed the game's fire-rate cooldown.
+Fix: edge-triggered writes. Only write a field when it is below or different from its target value. Never touch m_nTimeForNextShot at all — the game manages it.
+
+Error 14 — Empty group slot handling
+
+Where: runtime.
+Cause: 092B returns a handle of 0 for empty group slots on this build. A check for member < 0 let 0 through, and the following opcodes ran against the player (actor handle 0 is the player).
+Fix: check member <= 0, and add the 056D (does_char_exist) guard before any per-actor opcode.
+
+---
+
+7. THE BUILD SYSTEM
+
+Folder layout (flat, jni-rooted)
+
+```
+<project>/
+├── build.ps1
+├── ndkpath.txt           (optional; only if ANDROID_NDK_HOME not set)
+├── obj/                  (generated)
+├── libs/                 (generated)
+│   ├── arm64-v8a/libX64.so
+│   └── armeabi-v7a/libX.so
+└── jni/
+    ├── main.cpp
+    ├── Android.mk
+    ├── Application.mk
+    ├── aml-psdk/
+    ├── mod/
+    └── SAUtils/           (only for menu-tab mods)
+```
+
+Android.mk template
+
+```makefile
+LOCAL_PATH := $(call my-dir)
+
+# LOCAL_PATH guard for AML Companion (see Error 8/9)
+ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+    ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+        LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+    else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+        LOCAL_PATH := $(CURDIR)/jni
+    else ifneq ($(wildcard $(NDK_PROJECT_PATH)/main.cpp),)
+        LOCAL_PATH := $(NDK_PROJECT_PATH)
+    else ifneq ($(wildcard $(CURDIR)/main.cpp),)
+        LOCAL_PATH := $(CURDIR)
+    else
+        $(error Cannot find main.cpp)
+    endif
+endif
+
+include $(CLEAR_VARS)
+LOCAL_CPP_EXTENSION := .cpp .cc
+
+ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
+    LOCAL_MODULE := ModName
+else ifeq ($(TARGET_ARCH_ABI), arm64-v8a)
+    LOCAL_MODULE := ModName64
+else
+    LOCAL_MODULE := ModName
+endif
+
+LOCAL_SRC_FILES := main.cpp
+
+LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+                    $(LOCAL_PATH)/mod \
+                    $(LOCAL_PATH)/aml-psdk
+                    # add $(LOCAL_PATH)/SAUtils only for menu-tab mods
+
+LOCAL_CXXFLAGS += -O2 -DNDEBUG -std=c++17 -fvisibility=hidden
+LOCAL_LDLIBS += -llog
+
+include $(BUILD_SHARED_LIBRARY)
+```
+
+Application.mk template
+
+```makefile
+APP_ABI       := armeabi-v7a arm64-v8a
+APP_PLATFORM  := android-24
+APP_STL       := c++_static
+APP_CPPFLAGS  := -std=c++17
+```
+
+build.ps1 template
+
+```powershell
+$ErrorActionPreference = "Stop"
+
+$NDKPath = $env:ANDROID_NDK_HOME
+if ([string]::IsNullOrWhiteSpace($NDKPath)) {
+    $NDKPath = (Get-Content "$PSScriptRoot/ndkpath.txt" -Raw).Trim()
+}
+if ([string]::IsNullOrWhiteSpace($NDKPath)) { throw "Set ANDROID_NDK_HOME or add ndkpath.txt." }
+
+$buildScript = Join-Path $NDKPath "build/ndk-build"
+if (-not ($PSVersionTable.PSEdition -eq "Core")) { $buildScript += ".cmd" }
+if (!(Test-Path $buildScript)) { throw "ndk-build not found at $buildScript" }
+
+$jniDir = Join-Path $PSScriptRoot "jni"
+$mk     = Join-Path $jniDir "Android.mk"
+$appMk  = Join-Path $jniDir "Application.mk"
+
+foreach ($f in @($mk, $appMk)) {
+    if (!(Test-Path $f)) { throw "Missing: $f" }
+}
+
+& $buildScript `
+    NDK_PROJECT_PATH=$PSScriptRoot `
+    APP_BUILD_SCRIPT=$mk `
+    NDK_APPLICATION_MK=$appMk `
+    APP_ABI="arm64-v8a armeabi-v7a" `
+    NDK_DEBUG=0 `
+    -j4
+
+if ($LASTEXITCODE -ne 0) { throw "Build failed." }
+exit 0
+```
+
+---
+
+8. WHAT TO DO — CHECKLIST FOR EVERY NEW MOD
+
+Source-level
+
+☐ Add MYMOD(...) and NEEDGAME(...) at file scope. Both, always.
+☐ Include only the headers you use. Add one per game class referenced.
+☐ Define the Op<ID> wrapper exactly as shown.
+☐ Use Events::processScriptsEvent for opcode-driven work.
+☐ Every timer uses Reached(now, target) and u32.
+☐ Every target-valued write is edge-triggered (only writes if below or different).
+☐ Every model-dependent action streams first.
+☐ Add a ResetState() function inside the mod's namespace.
+☐ Register ResetState() on restartGameEvent, initGameEvent, reInitGameEvent.
+☐ Add a ped-pointer session check at the top of Update().
+☐ Empty-handle checks use <= 0, not < 0.
+☐ 056D (does_char_exist) precedes any per-actor opcode.
+
+Menu-level (only for menu-button mods)
+
+☐ Include <SAUtils/isautils.h> and add ISAUtils* sautils = nullptr; at file scope.
+☐ Register the deferred-execution tick before the SAUtils lookup.
+☐ Use AddSettingsTabButton(... STB_Pause ...) or AddSettingsTab + AddButton.
+☐ Callback only sets a flag; all real work happens in processScriptsEvent.
+☐ Log an error if SAUtils is not present, but do not return before registering the tick.
+
+Build-level
+
+☐ Android.mk has the LOCAL_PATH guard.
+☐ LOCAL_MODULE differs per ABI (Foo / Foo64).
+☐ LOCAL_CXXFLAGS include -std=c++17 -fvisibility=hidden.
+☐ LOCAL_LDLIBS += -llog.
+☐ Application.mk uses armeabi-v7a arm64-v8a, android-24, c++_static.
+☐ build.ps1 passes APP_ABI on the command line.
+
+Verification
+
+☐ rm -rf obj libs before a fresh build.
+☐ .\build.ps1 succeeds for both ABIs.
+☐ Both .so files appear under libs/.
+☐ Logcat shows <Mod>: loaded on launch.
+☐ Behaviour matches the CLEO source or the design.
+☐ New game / save load / restart / death-and-respawn all handled.
+
+---
+
+9. WHAT NOT TO DO — THE GRAVEYARD
+
+These are approaches that were tried and failed. Do not resurrect them.
+
+Approach Why it fails
+ISAUtils::ScriptCommand / CALLSCM / DEFOPCODE Varargs corruption. SIGABRT raised from the mod's own .so.
+extern ISAUtils* sautils as the opcode path Link-time undefined symbol: sautils.
+CommandByID (runtime opcode value) No per-call VM reset; second call reads garbage.
+Events::gameProcessEvent for opcode work Script VM state not consistent.
+Task-type-based recruited-member detection False positives on rival gangsters, mission followers, girlfriend-mission peds.
+Task-streak tracker with a fixed threshold Misses real recruits because followers switch sub-tasks constantly.
+Raw offsets for undeclared fields (e.g. CPed::m_nPedGroup) Offset differs across ABIs and versions. static_assert(kOffset != 0) blocks the build.
+Direct CPhysical proof flag writes as a permanent replacement for 02AB Works, but the game resets them. Prefer the opcode if one exists.
+Writing a value every tick when edge-triggered suffices HUD flicker, fire-rate bypass, m_nTimeForNextShot = 0 bug.
+SetModelIsDeletable on models the player will use Streaming evicts them → crash on next use.
+now >= target on a u32 millisecond counter Fails across the 49.7-day wrap.
+member < 0 for empty 092B slots Handle 0 slips through. Use member <= 0.
+Omitting MYMOD / MYMODCFG undefined symbol: aml.
+Using $(call my-dir) without the guard NDK wrapper leaks it to build/core.
+
+---
+
+10. FINAL PRINCIPLES
+
+1. If the game already has a script opcode that answers a question, use the opcode. Do not answer it by inspecting C++ state from native code.
+2. Compile-time opcode binding beats runtime dispatch. Op<0xNNNN> cannot mismatch its argument list. CommandByID(0xNNNN, ...) can.
+3. Reset VM state before every command. OpcodeCaller's constructor sets the pointer once. The wrapper must set it every time.
+4. A mod must run forever. Three-layer session reset: session events, ped-pointer check, and reset-on-no-player.
+5. Edge-trigger, don't spam. Write only when the value is below or different from its target.
+6. Stream before you give. Any model the player will see must be in memory before its opcode is called.
+7.SAUtils, any external interface — check at load time and degrade gracefully.
+8. When a wrapper's own documentation warns about a specific failure mode, believe it. SAUtils' header says pointer arguments to ScriptCommand can corrupt the stack. They did.
+9. The plain answer is usually the right one. Op<ID> over OpcodeCaller is three lines and works. It beat every clever alternative we tried.
+10. Log on load and on session boundary. One LOGI per session boundary made every "it stopped working" diagnosis take seconds instead of hours.
+
+---
+
+EPILOGUE
+
+Everything in this diary came from real work on real crash logs and real build failures. Nothing is hypothetical. The pattern is small enough to memorise and stable enough to reuse without modification.
+
+The next mod starts here.
+
+---
+
+Session diary — v1.0
+Author: Wazitech
+Credit: RusJJ, DK22Pac, AML Team
+
+########## LESSONS LEARNED & FIXES ##########
+
+================================================================================
+AML MOD DEVELOPMENT — LESSONS LEARNED & FIXES
+Version: 1.0
+Applies to: GTA:SA Android, AML + AML-PSDK, Op<ID> over OpcodeCaller
+================================================================================
+
+--------------------------------------------------------------------------------
+SECTION 1 — THE TWO FATAL BUGS
+--------------------------------------------------------------------------------
+
+These two bugs killed every mod before they were diagnosed. Check for them
+first, every single time.
+
+--- 1.1  Gating GET_* / STORE_* opcodes on the return value ---------------------
+
+WRONG:
+    if (!Op<0x01F5>(0, &actor)) return;      // GET_PLAYER_CHAR
+    if (!Op<0x03C0>(actor, &car)) return;    // STORE_CAR_CHAR_IS_IN
+    if (!Op<0x0227>(car, &hp)) return;       // GET_CAR_HEALTH
+    if (!Op<0x083F>(car, &upright)) return;  // GET_CAR_UPRIGHT_VALUE
+
+WHY IT'S WRONG:
+    Only IS_* opcodes reliably set the SCM condition flag. GET_* and STORE_*
+    opcodes leave the flag at whatever the last unrelated IF left behind.
+    So `if (!Op<...>)` reads a stale flag and skips the path unpredictably.
+    The mod compiles, loads, and silently does nothing.
+
+CORRECT:
+    Op<0x01F5>(0, &actor);
+    if (actor <= 0) return;              // test the OUTPUT, not the return
+
+Op<0x03C0>(actor, &car);
+    if (car <= 0) return;
+
+Op<0x0227>(car, &hp);
+    if (hp < 95.0f) { /* ... */ }        // test hp, not the return
+
+RULE:
+    if (!Op<...>)  →  ONLY for IS_* opcodes
+    Op<...>;        →  for GET_* / STORE_* / SET_* — read output, test output
+
+Known IS_* opcodes that are safe to gate:
+    0x0256  IS_PLAYER_PLAYING
+    0x00DF  IS_CHAR_IN_ANY_CAR
+    0x01F3  IS_CAR_IN_AIR_PROPER
+    0x02D8  IS_CURRENT_CHAR_WEAPON
+    0x04EE  IS_ANIMATION_LOADED
+    0x0A51  IS_WIDGET_PRESSED
+    0x03EE  IS_PLAYER_CONTROLLABLE
+    0x09E7  IS_PLAYER_CONTROL_ON
+
+--- 1.2  Null switchesArray on SAUtils clickable items -------------------------
+
+WRONG:
+    sautils->AddClickableItem(tab, "Season Mode",
+        value, 0, 4, nullptr, OnChanged);
+
+WHY IT'S WRONG:
+    SAUtils walks the switches array to render the current value's label.
+    Range 0..4 means it expects 5 labels. Null pointer → dereference at 0x0
+    inside SelectScreen::SettingSelection::Render. Immediate SIGSEGV.
+
+CORRECT:
+    static const char* kModeNames[] =
+        { "Auto", "Spring", "Summer", "Autumn", "Winter" };
+    sautils->AddClickableItem(tab, "Season Mode",
+        value, 0, 4, kModeNames, OnChanged);
+
+RULE:
+    switchesArray length MUST equal (maxVal - minVal + 1).
+    If you pass nullptr, use AddSliderItem instead, not AddClickableItem.
+    The array must be a file-scope static so its lifetime outlives the menu.
+
+--------------------------------------------------------------------------------
+SECTION 2 — OUTPUT FORMAT
+--------------------------------------------------------------------------------
+
+Source: AML MOD CONVERSION MASTER PROMPT §16, Cleo convert resource output §.
+
+Produce EXACTLY THREE FILES, in this order, in their own fenced code blocks:
+
+1. main.cpp
+    2. Android.mk
+    3. Application.mk
+
+Rules:
+    - No explanations between the code blocks.
+    - No "What to check" sections.
+    - No verification tables.
+    - No "how to use" guides.
+    - No tuning notes unless the user explicitly asks.
+    - One file per block, labelled with its filename.
+    - Do not split across multiple messages.
+    - Do not write one file at a time.
+
+If the user asks a partial question or wants a diff, answer accordingly and
+do NOT regenerate the whole mod.
+
+If the user asks to convert a CLEO script, produce the three files directly
+from the source. Nothing else.
+
+--------------------------------------------------------------------------------
+SECTION 3 — SOURCE FIDELITY
+--------------------------------------------------------------------------------
+
+When converting a CLEO script:
+
+- Every opcode in the source is a conversion unit. Every wait. Every jump.
+    - Argument order comes from the source disassembly, not a reference table.
+    - If the source has no native hook, do not add one.
+    - If the source has no diagnostic logging, do not add any.
+    - If the source multiplies velocity by X, do not change to nudge-toward-cap
+      unless the source's behavior is broken and the user has explicitly asked
+      you to fix it.
+    - Preserve every wait value, every conditional, every teleport offset,
+      every parameter — the mod must behave identically to the CLEO source.
+
+Do NOT add:
+    - CPed::UpdatePosition hooks (unless the source calls native functions)
+    - Per-tick diag: logs
+    - Extra counters, extra flags, extra cleanup
+    - "Safety" checks that aren't in the source
+
+The rulebook §1: "Every opcode goes through Op<ID>. No additional dependencies,
+no unrelated code."
+
+--------------------------------------------------------------------------------
+SECTION 4 — THE MANDATORY PATTERN
+--------------------------------------------------------------------------------
+
+--- 4.1  Op<ID> wrapper — verbatim, once per mod -------------------------------
+
+[Duplicate removed: identical rule/code block appears earlier in this document; see earlier occurrence.]
+
+OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+return Command<ID>(args...);
+    }
+
+--- 4.2  Wraparound-safe timing — verbatim --------------------------------------
+
+static inline bool Reached(uint32_t now, uint32_t target)
+    {
+        return static_cast<int32_t>(now - target) >= 0;
+    }
+
+--- 4.3  Hook point — always processScriptsEvent -------------------------------
+
+ON_MOD_LOAD()
+    {
+        Events::processScriptsEvent += []() { Mod::Update(); };
+        Events::restartGameEvent    += []() { Mod::ResetState(); };
+        Events::initGameEvent       += []() { Mod::ResetState(); };
+        Events::reInitGameEvent     += []() { Mod::ResetState(); };
+    }
+
+Never use Events::gameProcessEvent for opcode-driven work.
+
+--- 4.4  Three-layer session reset ---------------------------------------------
+
+Layer 1: ResetState on restartGameEvent + initGameEvent + reInitGameEvent
+    Layer 2: Player-ped pointer check inside Update()
+    Layer 3: Reset on "no player" branch (menu / loading / respawn)
+
+--- 4.5  ON_MOD_LOAD ordering --------------------------------------------------
+
+1. Do NOT touch any game state here. Register hooks only.
+    2. Bind config keys
+    3. Load config values into flags
+    4. Register events
+    5. Get SAUtils + register menu (only if menu is needed)
+
+--- 4.6  ON_MOD_UNLOAD — only if you mutated global state ----------------------
+
+ON_MOD_UNLOAD()
+    {
+        RestoreWeaponInfo();   // or whatever global state you touched
+    }
+
+--------------------------------------------------------------------------------
+SECTION 5 — CONFIG & MENU
+--------------------------------------------------------------------------------
+
+--- 5.1  Config system requires mod/config.cpp in LOCAL_SRC_FILES ---------------
+
+WRONG:
+    LOCAL_SRC_FILES := main.cpp
+
+Linker error:
+    undefined symbol: Config::Bind(char const*, bool, char const*)
+    undefined symbol: Config::Save()
+    undefined symbol: ConfigEntry::SetInt(int)
+    undefined symbol: Config::Config(char const*)
+
+CORRECT:
+    LOCAL_SRC_FILES := main.cpp \
+                       mod/config.cpp
+
+Every mod that uses MYMODCFG must list mod/config.cpp. AdvancedVehicle and
+StatsAdjuster build fine because they do. DynamicSeason v1.1 crashed the
+linker because it didn't.
+
+--- 5.2  Config pattern (from AdvancedVehicle / StatsAdjuster) ------------------
+
+struct CfgEntry { const char* key; bool* flag; bool def; };
+
+static CfgEntry s_Cfg[] = {
+        { "Enabled",  &s_bEnabled, true },
+        { "Feature2", &s_bFeature, false },
+    };
+
+static constexpr int kCfgCount = sizeof(s_Cfg) / sizeof(s_Cfg[0]);
+
+static void BindAllCfgKeys()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+            cfg->Bind(s_Cfg[i].key, s_Cfg[i].def, kSection);
+        cfg->Save();
+    }
+
+static void LoadCfg()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+            *s_Cfg[i].flag = cfg->GetBool(s_Cfg[i].key, s_Cfg[i].def, kSection);
+    }
+
+static void SaveCfg()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+        {
+            if (ConfigEntry* e = cfg->Bind(s_Cfg[i].key, s_Cfg[i].def, kSection))
+                e->SetBool(*s_Cfg[i].flag);
+        }
+        cfg->Save();
+        cfg->ClearLast();
+    }
+
+--- 5.3  SAUtils menu — correct usage -----------------------------------------
+
+sautils = (ISAUtils*)GetInterface("SAUtils");
+    if (!sautils) { LOGE("SAUtils not found"); return; }
+
+const eTypeOfSettings tab =
+        sautils->AddSettingsTab("Tab Name", "menu_mainsettings");
+
+// Clickable item — switchesArray must match range
+    sautils->AddClickableItem(tab, "Label",
+        initialValue, minVal, maxVal,
+        labelArray,           // NOT nullptr if maxVal > minVal
+        OnClickChanged);      // void(int, int, void*)
+
+// Slider — no array needed
+    sautils->AddSliderItem(tab, "Label",
+        initialValue, minVal, maxVal,
+        OnSliderChanged,      // void(int, int, void*)
+        OnSliderDrawed,       // const char*(int, void*)
+        pData);               // often &entry so callback knows which item
+
+// Button
+    sautils->AddButton(tab, "Label", OnButtonClicked);
+
+--- 5.4  Menu sync pattern -----------------------------------------------------
+
+The SAUtils menu runs on the UI thread. Two ways to read back values:
+
+Option A — poll every 500 ms inside Update():
+        if (Reached(now, s_NextSync)) {
+            s_NextSync = now + MENU_SYNC_MS;
+            s_bEnabled = sautils->ValueOfSettingsItem(s_MenuMasterId) != 0;
+        }
+
+Option B — callback with pData pointer (StatsAdjuster style):
+        static void OnStatChanged(int, int v, void* pData) {
+            StatEntry* e = (StatEntry*)pData;
+            e->value = v;
+            e->dirty = true;
+        }
+        sautils->AddSliderItem(..., &g_stats[i]);  // pData = entry
+
+Option B is better when the menu has many items — it avoids the poll.
+
+--------------------------------------------------------------------------------
+SECTION 6 — LOGGING & DIAGNOSTICS
+--------------------------------------------------------------------------------
+
+Log lifecycle events only:
+        - "=== ModName vX.Y loading ==="
+        - "loaded OK"
+        - "session reset"
+        - phase transitions (Loading -> Active -> Idle) if state machine
+
+Do NOT log per-tick:
+        - "diag: move=X spd=Y weapon=Z phase=W"  every second
+        - widget state scans
+        - per-vehicle configuration dumps
+
+Diagnostics are for debugging only. Ship the mod without them.
+
+--------------------------------------------------------------------------------
+SECTION 7 — BUILD FILES
+--------------------------------------------------------------------------------
+
+--- 7.1  Android.mk — required elements ---------------------------------------
+
+- LOCAL_PATH guard (AML Companion my-dir leak)
+    - Per-ABI module name (Foo / Foo64)
+    - mod/config.cpp in LOCAL_SRC_FILES if the mod uses MYMODCFG
+    - -llog in LOCAL_LDLIBS
+    - -std=c++17 -fvisibility=hidden in LOCAL_CXXFLAGS
+
+--- 7.2  Application.mk — required elements ------------------------------------
+
+APP_ABI       := armeabi-v7a arm64-v8a
+    APP_PLATFORM  := android-24
+    APP_STL       := c++_static
+    APP_CPPFLAGS  := -std=c++17
+
+--------------------------------------------------------------------------------
+SECTION 8 — STOP AND REPORT TRIGGERS
+--------------------------------------------------------------------------------
+
+Stop coding and ask the user when any of these are true:
+
+- You do not know a widget ID (2, 31, etc.) for the user's touch layout.
+    - You do not know whether an IFP contains a specific animation.
+    - You do not know a property index, model ID, stat ID, or offset.
+    - A required API is unverified.
+    - A structure layout conflicts between sources.
+    - The user's request conflicts with source fidelity (e.g. asks you to
+      change behavior that the CLEO script deliberately implements).
+
+Do NOT fill the gap with a guess. Do NOT invent an opcode parameter order.
+Do NOT add a "safety" hook or flag the source doesn't have.
+
+Ask. Then build.
+
+--------------------------------------------------------------------------------
+SECTION 9 — MODS THAT WORK vs MODS THAT FAIL
+--------------------------------------------------------------------------------
+
+Empirical pattern from this project family:
+
+Write-only mods (SET_*, REMOVE_IPL, FORCE_WEATHER):
+        - Almost always work if the opcode call is well-formed.
+        - No gate → no flag trap.
+        - Example: CityUnlock (works).
+
+Write-only mods with menu (SET_* + SAUtils):
+        - Work if the switchesArray issue is avoided.
+        - Example: AdvancedVehicle, StatsAdjuster (work).
+
+Read-gated mods (GET_* + react):
+        - Fail silently if GET_*/STORE_* flag gating is used.
+        - Example: SprintBoost v1-v5 (all failed with the same bug).
+
+Environment-dependent mods (widget IDs, IFP contents, property indices):
+        - Fail if the environment doesn't match assumptions.
+        - Report the assumption and stop before writing.
+        - Example: sprint animation swaps (need widget 2 + IFP with anims).
+
+--------------------------------------------------------------------------------
+SECTION 10 — QUICK CHECKLIST BEFORE SHIPPING
+--------------------------------------------------------------------------------
+
+[ ] Op<ID> wrapper present and used for every opcode.
+    [ ] m_pBaseIP = m_pCurrentIP = g_ScriptBuffer before every call.
+    [ ] m_bWastedBustedCheck = true before every call.
+    [ ] No `if (!Op<GET_*>)` or `if (!Op<STORE_*>)` anywhere.
+    [ ] Only IS_* opcodes are used in boolean gates.
+    [ ] GET_*/STORE_* output variables are read and tested directly.
+    [ ] SAUtils clickable items have non-null arrays matching the range.
+    [ ] SAUtils slider items have no array.
+    [ ] Hook registered on processScriptsEvent.
+    [ ] ResetState() registered on all three session events.
+    [ ] Player-ped pointer check inside Update().
+    [ ] No diag: logs, no per-tick spam.
+    [ ] No hooks or flags not present in the source.
+    [ ] No invented opcode numbers, parameter orders, or field names.
+    [ ] Logging via __android_log_print only.
+    [ ] mod/config.cpp listed in LOCAL_SRC_FILES if MYMODCFG is used.
+    [ ] Android.mk has the LOCAL_PATH guard.
+    [ ] Android.mk has per-ABI module names.
+    [ ] Application.mk matches the family standard.
+    [ ] Output is exactly three files: main.cpp, Android.mk, Application.mk.
+    [ ] No explanations between code blocks.
+
+================================================================================
+END OF README
+================================================================================
+
+########## Deep Analysis & Memorization ##########
+
+[REMOVED — duplicate content]
+
+This section previously restated the full contents of:
+  • 01_Core_Rules_and_Protocols.txt  (protocol, canonical fixes, master prompt)
+  • 02_Conversion_Templates_and_Patterns.txt
+  • 04_Reference_Data_IDs_and_Enums.txt (peds, vehicles, weapons, stats, enums)
+
+Those files are the authoritative sources. Use them directly instead of this memo.
+
+Unique value that lived only here (kept notes):
+  - Zone hierarchy reminder: LS / SF / LV / Desert / Red County grouping
+  - Authority order: universal rule v2.6 > CANONICAL FIXES > PROTOCOL v1.1 > MASTER PROMPT > templates
+  - Prefer verified native implementation; retain CLEO only where justified

@@ -1,0 +1,1818 @@
+================================================================================
+AML MOD DEVELOPMENT — CORE RULES & PROTOCOLS
+Organized collection of authoritative rules, protocols, canonical fixes,
+master conversion prompt, and related corrections.
+================================================================================
+
+Authority order (when documents disagree):
+  1. universal rule.txt v2.6 (authoritative)
+  2. CANONICAL FIXES & ERRATA v1.0
+  3. CONSOLIDATED PROTOCOL v1.1
+  4. MASTER PROMPT V1.0
+  5. Pattern / template docs
+  6. Everything else (reference)
+
+================================================================================
+CONTENTS OF THIS FILE
+================================================================================
+- AML MOD DEVELOPMENT — CONSOLIDATED PROTOCOL v1.1
+- CANONICAL FIXES & ERRATA
+- AML MOD CONVERSION MASTER PROMPT V1.0
+- Correction Acknowledged (INI Header)
+================================================================================
+
+########## CONSOLIDATED PROTOCOL v1.1 ##########
+
+================================================================================
+AML MOD DEVELOPMENT — CONSOLIDATED PROTOCOL v1.1
+================================================================================
+Supersedes: the working protocol summarised in this session.
+Authority:  universal rule.txt v2.6 > CANONICAL FIXES & ERRATA v1.0 >
+            this document > family pattern/tutorial docs.
+Author:     Wazitech
+Credit:     RusJJ, DK22Pac, AML Team
+
+Revision note (v1.0 -> v1.1):
+    Added §14 Menu Tab Header Block
+    Added §15 Config INI Header Block
+    Added §16 Config Fully Active On Load
+    Added §17 Key-Press -> Menu Button
+    All prior sections retained unchanged.
+
+================================================================================
+1. AUTHORITY ORDER
+================================================================================
+
+When documents disagree:
+
+1. universal rule.txt v2.6          — authoritative
+    2. CANONICAL FIXES & ERRATA v1.0    — supersedes all older family docs
+    3. This protocol (v1.1)
+    4. AML MOD CONVERSION MASTER PROMPT V1.0 — workflow
+    5. AML CSA AUTOMATIC PATTERN        — skeleton
+    6. All other family docs            — reference only
+
+================================================================================
+2. THE ONE VERIFIED CONVERSION PATH
+================================================================================
+
+CLEO .csa / .csi -> native AML mod through Op<ID> over OpcodeCaller.
+Nothing else.
+
+template <uint16_t ID, typename... Args>
+    static inline bool Op(Args... args)
+    {
+        OpcodeCaller::g_Script.m_pBaseIP =
+            OpcodeCaller::g_Script.m_pCurrentIP =
+                OpcodeCaller::g_ScriptBuffer;
+        OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+        return Command<ID>(args...);
+    }
+
+Verbatim, once per mod, inside the mod's namespace.
+
+Banned forever: SAUtils ScriptCommand / CALLSCM / DEFOPCODE, CommandByID,
+bare Op<> without an ID, any spelling other than Op<0xNNNN>(...).
+
+================================================================================
+3. HOOK POINT
+================================================================================
+
+Events::processScriptsEvent only.
+Never gameProcessEvent for opcode work.
+
+================================================================================
+4. SESSION ROBUSTNESS — THREE LAYERS
+================================================================================
+
+Every mod must survive new game, save load, in-game restart, death +
+respawn, autoload, checkpoint.
+
+Layer 1: ResetState() on restartGameEvent + initGameEvent +
+             reInitGameEvent.
+    Layer 2: Player-ped pointer change inside Update().
+    Layer 3: Reset on the !player branch.
+
+ResetState() zeroes flags, timestamps, cached handles, vectors. Does not
+touch the Op wrapper or opcode sequence.
+
+================================================================================
+5. TIMING
+================================================================================
+
+static inline bool Reached(uint32_t now, uint32_t target)
+    {
+        return static_cast<int32_t>(now - target) >= 0;
+    }
+
+All timestamps uint32_t. Never now >= target.
+wait <ms> -> Reached() guard, same interval.
+
+================================================================================
+6. THE TWO FATAL BUGS
+================================================================================
+
+Bug A — if (!Op<GET_*>) / if (!Op<STORE_*>)
+    Only IS_* opcodes set the SCM condition flag reliably.
+    Call the opcode, test the OUTPUT.
+
+Bug B — null switchesArray on AddClickableItem
+    Array length must equal (maxVal - minVal + 1), file-scope static.
+    Otherwise use AddSliderItem.
+
+================================================================================
+7. CANONICAL BUILD FILES
+================================================================================
+
+Android.mk guard — this exact 3-way form only:
+
+LOCAL_PATH := $(call my-dir)
+    ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+        ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+            LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+        else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+            LOCAL_PATH := $(CURDIR)/jni
+        else
+            $(error Cannot find main.cpp)
+        endif
+    endif
+
+No findstring detector, no 5-way wildcard, no NDK_PROJECT_PATH/main.cpp
+first.
+
+Per-ABI module name: Foo / Foo64.
+MYMODCFG requires mod/config.cpp in LOCAL_SRC_FILES.
+Application.mk: armeabi-v7a arm64-v8a, android-24, c++_static, -std=c++17.
+
+================================================================================
+8. LOGGING
+================================================================================
+
+__android_log_print only. Never logger->Info / <mod/logger.h>.
+
+#define LOG_TAG "<<<TAG>>>"
+    #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+    #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+Log lifecycle only. No per-tick spam.
+
+================================================================================
+9. SOURCE FIDELITY
+================================================================================
+
+- Every opcode in the source is a conversion unit, one at a time, in
+  source order.
+- Argument order comes from the source disassembly, never a reference
+  table.
+- 00D6 / 004D -> C++ if (!Op<...>).
+- 0001: wait <ms> -> Reached() guard, same interval.
+- Every persistent CLEO local -> namespace static, zeroed in ResetState().
+- 8xxx NOT-prefixed opcodes use the same argument string as 0xxx base.
+- No added hooks, diagnostics, counters, or safety flags the source
+  didn't have.
+- Unverifiable parameter order -> UNVERIFIED, do not build.
+
+================================================================================
+10. EDGE-TRIGGERED WRITES
+================================================================================
+
+Target-valued fields (ammo, health, accuracy, proofs) — write only when
+current is below or different from target. Never every tick: HUD flicker,
+cooldown bypass (m_nTimeForNextShot = 0 turns every weapon full-auto).
+
+================================================================================
+11. STREAMING
+================================================================================
+
+CStreaming::RequestModel(modelId, 2);
+    CStreaming::LoadAllRequestedModels(false);
+
+Before any model-dependent opcode. Never SetModelIsDeletable on models
+the player will use.
+
+================================================================================
+12. HANDLE vs POINTER
+================================================================================
+
+CLEO handles are 32-bit pool indices — keep them as int if only passed to
+opcodes. Resolve to a pointer only for field access with no opcode
+equivalent. Never mix. Empty 092B slots return 0 -> check <= 0 and guard
+with 056D.
+
+================================================================================
+13. MENU MODS — SAUtils Menu API Only
+================================================================================
+
+- sautils = (ISAUtils*)GetInterface("SAUtils"). If null, log error but
+  do not return before registering the deferred tick.
+- Button callback (UI thread) -> only sets a flag.
+- Work runs on the next processScriptsEvent tick (game thread).
+- Pause-menu variant (SAUtils >= 1.4.1): AddSettingsTabButton(...).
+- Settings-tab variant (SAUtils >= 1.3): AddSettingsTab + AddButton /
+  AddClickableItem / AddSliderItem.
+
+================================================================================
+14. MENU TAB HEADER BLOCK — NEW
+================================================================================
+
+Every SAUtils menu tab, in both pause-menu and settings-tab variants,
+presents this metadata block as the first visible content of the tab:
+
+Author:     Wazitech
+    Version:    x.y
+    Credit:     RusJJ, DK22Pac, AML Team
+    Requires:   AML + AML-PSDK + SAUtils
+
+Rules:
+
+- Version: equals the mod's own MYMODCFG version string. Never a
+  placeholder.
+- Requires: always lists all three — AML, AML-PSDK, SAUtils — because
+  the tab only exists when SAUtils is present.
+- If the SAUtils version in use offers a subtitle or header label
+  region, the block goes there; otherwise it is rendered as the first
+  non-interactive entries of the tab.
+- The <<<TabName>>> short label (e.g. WCSFN) remains the tab identifier;
+  the metadata block is what the user sees inside.
+
+================================================================================
+15. CONFIG INI HEADER BLOCK — NEW
+================================================================================
+
+Every mod-written .ini begins with this header, before any section or key:
+
+; =========================================================
+    ; Author:     Wazitech
+    ; Version:    x.y
+    ; Credit:     RusJJ, DK22Pac, AML Team
+    ; Requires:   AML + AML-PSDK
+    ; Game:       GTA:SA 2.00 (32-bit, armeabi-v7a) /
+    ;             2.10 (64-bit, arm64-v8a)
+    ; =========================================================
+    ;
+    ; This file is generated and maintained by the mod.
+    ; Edit only while the game is closed.
+    ; Menu changes are written back here on save.
+    ;
+
+Rules:
+
+- The Requires: line here lists AML + AML-PSDK only — the INI is
+  written independently of SAUtils availability.
+- Version: tracks the mod version and is rewritten on next save when
+  the mod version changes.
+- Keys and sections follow the header in the normal AML config format.
+- The header is emitted on first save and preserved on every subsequent
+  save.
+
+================================================================================
+16. CONFIG FULLY ACTIVE ON LOAD — NEW
+================================================================================
+
+Any value saved to config — whether hand-edited or changed through the
+menu — must be fully active the moment the game finishes loading, with
+no manual re-apply step. Three halves:
+
+16a. On ON_MOD_LOAD / first valid tick — everything is read and applied.
+
+- LoadCfg() reads every key into its runtime flag.
+    - Every runtime flag is pushed into the game (statics, opcodes,
+      PSDK fields — whichever the feature uses).
+    - The mod does not wait for the user to open the menu for values
+      to take effect.
+
+16b. Menu changes are written back to config immediately, not on shutdown.
+
+- Menu callback (UI thread) sets the value and marks the entry dirty.
+    - The next processScriptsEvent tick flushes dirty entries via
+      cfg->Save() on the game thread.
+    - If the game is killed without a clean shutdown, the value is
+      already on disk.
+
+16c. On session boundary — everything is re-applied from config.
+
+- ResetState() zeroes runtime state but does not discard
+      config-derived values.
+    - The three session events trigger a fresh LoadCfg() + apply pass.
+    - The player-ped pointer change inside Update() also triggers the
+      apply pass, so new game / save load / respawn all come up fully
+      configured.
+
+Net effect: menu change -> live this session -> on disk -> live again on
+every future load. No "toggle to take effect" step exists.
+
+================================================================================
+17. KEY-PRESS -> MENU BUTTON — NEW
+================================================================================
+
+Any CLEO construct that waits for or reacts to a keyboard / joypad key
+press becomes an SAUtils clickable menu button. No native key-polling is
+emitted.
+
+Covered opcodes:
+
+0AB0  key_pressed <vk>       -> AddButton / AddSettingsTabButton
+    0AA6  wait_for_key <vk>      -> AddButton (blocking wait dropped;
+                                     the button is the wait)
+    0AC8  key_released <vk>      -> AddButton (release collapses to click)
+    any script-level key bind    -> AddButton
+    00D6 + key gate + 004D       -> button replaces the gate
+
+Rules:
+
+- One key -> one button. Two keys that do the same action -> one button
+  (or two if the source intent is clearer that way).
+- Button labels describe the action, not the key. A script bound to
+  VK_F5 spawning a car becomes "Spawn Car", not "F5".
+- Callback fires on UI thread -> only sets a flag. Work runs on
+  processScriptsEvent.
+- Hold-to-repeat actions (accelerate, drain ammo) become either a
+  Reached()-timed loop inside PerformAction() or a toggle button — pick
+  whichever matches the source effect; document the choice in the header
+  comment. Silent behaviour change is forbidden.
+
+Not emitted:
+
+- No CHid / CPad polling.
+- No gameProcessEvent key check.
+- No virtual-key constants anywhere in the output.
+- No 0AB0 / 0AA6 / 0AC8 in the output.
+
+================================================================================
+18. STOP-AND-REPORT TRIGGERS
+================================================================================
+
+Stop and ask when:
+
+- An opcode's parameter order cannot be reproduced from disassembly.
+- A widget ID, IFP content, property index, model ID, stat ID, or offset
+  is unknown.
+- A field is undeclared in the SDK — find a script opcode; do not guess
+  offsets.
+- SIGABRT raised from the mod's own .so during Idle -> varargs stack
+  corruption. Do not retry.
+- The canonical guard cannot find main.cpp after $(LOCAL_PATH) and
+  $(NDK_PROJECT_PATH)/jni.
+- The user's request conflicts with source fidelity.
+
+Never fill a gap with a guess.
+
+================================================================================
+19. OUTPUT FORMAT
+================================================================================
+
+For conversion / full-mod requests — exactly three files, three fenced
+blocks, labelled, no explanations between blocks:
+
+1. main.cpp       — full mod with header comment block
+    2. Android.mk
+    3. Application.mk
+
+For partial questions or diffs — answer accordingly, do not regenerate
+the whole mod.
+
+================================================================================
+20. VERIFICATION CHECKLIST
+================================================================================
+
+Before returning any mod:
+
+[ ] Op<ID> wrapper present, verbatim, inside namespace
+[ ] m_pBaseIP = m_pCurrentIP = g_ScriptBuffer before every command
+[ ] m_bWastedBustedCheck = true before every command
+[ ] Hook on processScriptsEvent (not gameProcessEvent)
+[ ] ResetState() on all three session events
+[ ] Player-ped pointer check inside Update()
+[ ] No if (!Op<GET_*>) or if (!Op<STORE_*>) anywhere
+[ ] Every game class has a matching #include
+[ ] Every timer uses Reached() + u32
+[ ] Every target-valued write is edge-triggered
+[ ] Every model-dependent action streams first
+[ ] Logging via __android_log_print, not logger->*
+[ ] No SAUtils ScriptCommand / CALLSCM / DEFOPCODE
+[ ] mod/config.cpp in LOCAL_SRC_FILES if MYMODCFG
+[ ] Canonical 3-way LOCAL_PATH guard
+[ ] Per-ABI module name (Foo / Foo64)
+[ ] Menu tab shows the Author / Version / Credit / Requires header
+    block (§14)
+[ ] Config INI begins with the Author / Version / Credit / Requires /
+    Game header block (§15)
+[ ] Config values are fully active on load — read, applied, persisted
+    immediately (§16)
+[ ] Every CLEO key-press opcode has a corresponding SAUtils button; no
+    key polling emitted (§17)
+[ ] Button labels describe the action, not the key (§17)
+
+================================================================================
+21. STANDING APPLICATION
+================================================================================
+
+Sections 14–17 are part of the standing protocol, at the same authority
+level as the Op<ID> wrapper and the three-layer session reset. They
+apply to:
+
+- Every new mod written.
+- Every CLEO -> AML conversion produced.
+- Every existing mod touched, unless the user explicitly overrides for
+  that one mod — and any override is called out.
+
+================================================================================
+End of protocol v1.1
+================================================================================
+
+########## CANONICAL FIXES & ERRATA ##########
+
+================================================================================
+AML MOD DEVELOPMENT — CANONICAL FIXES & ERRATA
+Applies to: the 8-document family (CSA Automatic Pattern, Master Prompt V1.0,
+            Session Diary, Cleo Convert Resource, CSI Button Pause Menu,
+            CSI Menu Create, Lessons Learned, universal rule v2.6)
+Purpose:    Corrects the inconsistencies found across the family.
+Authority:  universal rule.txt v2.6 wins every conflict.
+Version:    1.0
+================================================================================
+
+================================================================================
+FIX 0 — CANONICAL Android.mk GUARD (supersedes every other variant)
+================================================================================
+
+Every Android.mk in this family must use exactly this LOCAL_PATH guard.
+The variants found in Docs 1, 2, 3, and 4 are superseded.
+
+LOCAL_PATH := $(call my-dir)
+
+ifeq ($(wildcard $(LOCAL_PATH)/main.cpp),)
+        ifneq ($(wildcard $(NDK_PROJECT_PATH)/jni/main.cpp),)
+            LOCAL_PATH := $(NDK_PROJECT_PATH)/jni
+        else ifneq ($(wildcard $(CURDIR)/jni/main.cpp),)
+            LOCAL_PATH := $(CURDIR)/jni
+        else
+            $(error Cannot find main.cpp)
+        endif
+    endif
+
+Do NOT substitute:
+    - a findstring-based detector (Doc 2)
+    - a 5-way wildcard (Docs 3, 4)
+    - any variant that puts NDK_PROJECT_PATH/main.cpp first (Doc 4)
+
+================================================================================
+FIX 1 — CANONICAL Android.mk (full file)
+================================================================================
+
+# Android.mk — canonical (rulebook v2.6 §44)
+
+LOCAL_PATH := $(call my-dir)
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+include $(CLEAR_VARS)
+    LOCAL_CPP_EXTENSION := .cpp .cc
+
+ifeq ($(TARGET_ARCH_ABI), armeabi-v7a)
+        LOCAL_MODULE := <<<Name>>>
+    else ifeq ($(TARGET_ARCH_ABI), arm64-v8a)
+        LOCAL_MODULE := <<<Name>>>64
+    else
+        LOCAL_MODULE := <<<Name>>>
+    endif
+
+LOCAL_SRC_FILES := main.cpp
+    # Append mod/config.cpp if this mod uses MYMODCFG:
+    #   LOCAL_SRC_FILES += mod/config.cpp
+
+LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+                        $(LOCAL_PATH)/mod \
+                        $(LOCAL_PATH)/aml-psdk
+    # Add $(LOCAL_PATH)/SAUtils only for menu-tab mods.
+
+LOCAL_CXXFLAGS += -O2 -DNDEBUG -std=c++17 -fvisibility=hidden
+    LOCAL_LDLIBS   += -llog
+
+include $(BUILD_SHARED_LIBRARY)
+
+================================================================================
+FIX 2 — CANONICAL Application.mk
+================================================================================
+
+APP_ABI       := armeabi-v7a arm64-v8a
+    APP_PLATFORM  := android-24
+    APP_STL       := c++_static
+    APP_CPPFLAGS  := -std=c++17
+
+================================================================================
+FIX 3 — GET_*/STORE_* GATING BUG  (missing from Docs 1, 2, 4)
+================================================================================
+
+Only IS_* opcodes reliably set the SCM condition flag.
+GET_* and STORE_* leave the flag at whatever the last unrelated IF left.
+Gating a GET_*/STORE_* on the return value makes the branch skip
+non-deterministically — the mod compiles, loads, and silently does nothing.
+
+WRONG:
+        if (!Op<0x01F5>(0, &actor)) return;      // GET_PLAYER_CHAR
+        if (!Op<0x03C0>(actor, &car)) return;    // STORE_CAR_CHAR_IS_IN
+        if (!Op<0x0227>(car, &hp)) return;       // GET_CAR_HEALTH
+
+RIGHT:
+        Op<0x01F5>(0, &actor);
+        if (actor <= 0) return;                  // test the OUTPUT
+
+Op<0x03C0>(actor, &car);
+        if (car <= 0) return;
+
+Op<0x0227>(car, &hp);
+        if (hp < 95.0f) { /* ... */ }
+
+RULE:  if (!Op<...>)  →  ONLY for IS_* opcodes
+       Op<...>;        →  for GET_* / STORE_* / SET_*: call, read output,
+                          test the output directly
+
+Known IS_* opcodes safe to gate:
+    0x0256  IS_PLAYER_PLAYING
+    0x00DF  IS_CHAR_IN_ANY_CAR
+    0x01F3  IS_CAR_IN_AIR_PROPER
+    0x02D8  IS_CURRENT_CHAR_WEAPON
+    0x04EE  IS_ANIMATION_LOADED
+    0x0A51  IS_WIDGET_PRESSED
+    0x03EE  IS_PLAYER_CONTROLLABLE
+    0x09E7  IS_PLAYER_CONTROL_ON
+
+================================================================================
+FIX 4 — SAUtils NULL switchesArray BUG  (missing from Docs 1, 2, 4, 6)
+================================================================================
+
+SAUtils walks the switches array to render the current value's label.
+Passing nullptr with maxVal > minVal produces SIGSEGV at 0x0 in
+SelectScreen::SettingSelection::Render.
+
+WRONG:
+        sautils->AddClickableItem(tab, "Season Mode",
+            value, 0, 4, nullptr, OnChanged);
+
+RIGHT:
+        static const char* kSeasonNames[] =
+            { "Auto", "Spring", "Summer", "Autumn", "Winter" };
+        sautils->AddClickableItem(tab, "Season Mode",
+            value, 0, 4, kSeasonNames, OnChanged);
+
+RULES:
+    - switchesArray length MUST equal (maxVal - minVal + 1).
+    - The array MUST be a file-scope static (lifetime > menu).
+    - If you don't need labels, use AddSliderItem — not a null array.
+
+================================================================================
+FIX 5 — MYMODCFG REQUIRES mod/config.cpp IN LOCAL_SRC_FILES
+        (missing from Docs 5, 6)
+================================================================================
+
+WRONG:
+        LOCAL_SRC_FILES := main.cpp
+
+Linker error:
+        undefined symbol: Config::Bind(char const*, bool, char const*)
+        undefined symbol: Config::Save()
+        undefined symbol: ConfigEntry::SetInt(int)
+        undefined symbol: Config::Config(char const*)
+
+RIGHT:
+        LOCAL_SRC_FILES := main.cpp \
+                           mod/config.cpp
+
+Every MYMODCFG mod must list mod/config.cpp.
+MYMOD (no config) does not need it.
+
+================================================================================
+FIX 6 — CANONICAL CONFIG BIND → SAVE → LOAD PATTERN  (Docs 5, 6)
+================================================================================
+
+The config loop in Docs 5 and 6 uses Bind-only. Bind registers a default
+but does not persist the value. Use the pattern below.
+
+struct CfgEntry { const char* key; bool* flag; bool def; };
+
+static CfgEntry s_Cfg[] = {
+        { "Enabled",  &s_bEnabled, true  },
+        { "Feature2", &s_bFeature, false },
+    };
+    static constexpr int kCfgCount = sizeof(s_Cfg) / sizeof(s_Cfg[0]);
+
+static void BindAllCfgKeys()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+            cfg->Bind(s_Cfg[i].key, s_Cfg[i].def, kSection);
+        cfg->Save();
+    }
+
+static void LoadCfg()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+            *s_Cfg[i].flag = cfg->GetBool(s_Cfg[i].key, s_Cfg[i].def, kSection);
+    }
+
+static void SaveCfg()
+    {
+        for (int i = 0; i < kCfgCount; ++i)
+        {
+            if (ConfigEntry* e = cfg->Bind(s_Cfg[i].key, s_Cfg[i].def, kSection))
+                e->SetBool(*s_Cfg[i].flag);
+        }
+        cfg->Save();
+        cfg->ClearLast();
+    }
+
+================================================================================
+FIX 7 — LOGGING — REPLACE logger->* IN DOCS 5 and 6
+================================================================================
+
+Docs 5 and 6 use logger->Info / logger->Error / <mod/logger.h>.
+The header is not guaranteed present in every AML build.
+
+REMOVE:
+        #include <mod/logger.h>
+        logger->SetTag("<<<TAG>>>");
+        logger->Info(...)
+        logger->Error(...)
+
+ADD:
+        #include <android/log.h>
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+Replace each call:
+    logger->Info("Loaded %d entries from config", n);    →  LOGI("Loaded %d entries from config", n);
+    logger->Info("applying entry %d %d", a, b);          →  LOGI("applying entry %d %d", a, b);
+    logger->Info("Action served (%d entries)", n);       →  LOGI("Action served (%d entries)", n);
+    logger->Error("SAUtils not found ...");              →  LOGE("SAUtils not found ...");
+    logger->Info("Pause-menu button created");           →  LOGI("Pause-menu button created");
+    logger->SetTag("<<<TAG>>>");                         →  (delete — LOG_TAG handles it)
+
+================================================================================
+FIX 8 — Op<> SPELLING CORRECTION (Doc 4 garbled rule)
+================================================================================
+
+The strict-rules block in Doc 4 is self-contradictory. Corrected intent:
+
+- Do NOT use CommandByID(0xNNNN, ...) — runtime dispatch has no
+      per-call VM reset. Use the compile-time Op<0xNNNN>(...) wrapper.
+
+- Do NOT use a bare Op<>(...) with no template parameter. The ID
+      is mandatory.
+
+- Do NOT use SAUtils ScriptCommand / CALLSCM / DEFOPCODE — the
+      varargs path SIGABRTs on pointer arguments.
+
+- USE the wrapper exactly as defined in rulebook v2.6 §74.
+
+================================================================================
+FIX 9 — ADDITIONAL DEPRECATED PATHS (append to every deprecated list)
+================================================================================
+
+- `if (!Op<GET_*>)` / `if (!Op<STORE_*>)`
+        Only IS_* opcodes reliably set the SCM condition flag.
+        GET_*/STORE_* leave it stale. Test the output variable.
+
+- `AddClickableItem(..., nullptr, ...)` when maxVal > minVal
+        SAUtils dereferences the array to render labels. SIGSEGV at 0x0.
+        Array length must equal (maxVal - minVal + 1); must be static.
+
+- MYMODCFG without mod/config.cpp in LOCAL_SRC_FILES
+        Link error: undefined symbol Config::Bind / Config::Save /
+        ConfigEntry::SetInt / Config::Config.
+
+- `logger->Info` / `logger->Error` / `#include <mod/logger.h>`
+        Header not guaranteed present. Use __android_log_print.
+
+- Non-canonical Android.mk LOCAL_PATH guards
+        findstring-based detector, 5-way wildcard, and any variant
+        that puts NDK_PROJECT_PATH/main.cpp first are superseded
+        by the 3-way guard in FIX 0.
+
+- Task-type-based recruited-member detection
+        False positives on rival gangsters, mission followers,
+        girlfriend-mission peds. Use opcode 092B only.
+
+- Raw offsets for undeclared fields (e.g. CPed::m_nPedGroup)
+        Offset differs across ABIs and versions. Use a script opcode
+        that returns the value, or mark UNVERIFIED.
+
+- Direct CPhysical proof flag writes as a replacement for 02AB
+        Game resets them. Prefer the opcode.
+
+- `Events::gameProcessEvent` for opcode-driven work
+        Script VM state not consistent. Use processScriptsEvent.
+
+- `now >= target` on a u32 millisecond counter
+        Fails across the 49.7-day wrap. Use Reached().
+
+- `member < 0` for empty 092B slots
+        Handle 0 slips through. Use `member <= 0` and guard with 056D.
+
+- SetModelIsDeletable on models the player will use
+        Streaming evicts them → crash on next use.
+
+- Writing a value every tick when edge-triggered suffices
+        HUD flicker, fire-rate bypass, m_nTimeForNextShot = 0 bug.
+
+- Omitting MYMOD / MYMODCFG at file scope
+        Link error: undefined symbol: aml.
+
+================================================================================
+FIX 10 — ERROR CATALOGUE ADDITIONS (Session Diary §6)
+================================================================================
+
+Error 15 — Silent no-op on read-gated mods
+    Where:  runtime, no crash, mod "does nothing"
+    Cause:  GET_*/STORE_* gated on return value
+    Fix:    Call the opcode, test the output. See FIX 3.
+
+Error 16 — SIGSEGV in SAUtils::SettingSelection::Render
+    Where:  runtime, immediately after opening the settings tab
+    Cause:  AddClickableItem with null switchesArray, maxVal > minVal
+    Fix:    Array length = (maxVal - minVal + 1); file-scope static.
+            Or use AddSliderItem. See FIX 4.
+
+Error 17 — undefined symbol: Config::Bind / Config::Save /
+          ConfigEntry::SetInt / Config::Config
+    Where:  link time
+    Cause:  MYMODCFG without mod/config.cpp in LOCAL_SRC_FILES
+    Fix:    Add mod/config.cpp to LOCAL_SRC_FILES. See FIX 5.
+
+================================================================================
+FIX 11 — SESSION DIARY §8 BUILD-LEVEL CHECKLIST ADDITIONS
+================================================================================
+
+[ ] If MYMODCFG is used, mod/config.cpp is in LOCAL_SRC_FILES.
+    [ ] Android.mk uses the canonical 3-way LOCAL_PATH guard (FIX 0).
+    [ ] No `if (!Op<GET_*>)` / `if (!Op<STORE_*>)` anywhere.
+    [ ] SAUtils AddClickableItem arrays are non-null and length-matched.
+
+================================================================================
+FIX 12 — SESSION DIARY §9 GRAVEYARD ADDITIONS
+================================================================================
+
+| Gating GET_*/STORE_* on `if (!Op<...>)`  | Return flag is stale.
+    |   Branch skips unpredictably. Test the output variable instead.
+    |
+    | Null switchesArray on AddClickableItem  | SAUtils renders the value
+    |   label from the array → SIGSEGV at 0x0.
+    |
+    | MYMODCFG without mod/config.cpp         | Link error: undefined
+    |   symbol Config::Bind / Config::Save / ConfigEntry::SetInt.
+    |
+    | Non-canonical LOCAL_PATH guards         | my-dir leaks to NDK's
+    |   build/core → "No rule to make target 'main.cpp'".
+
+================================================================================
+FIX 13 — LESSONS LEARNED §10 CHECKLIST ADDITIONS
+================================================================================
+
+[ ] Android.mk uses the canonical 3-way LOCAL_PATH guard (v2.6 §44).
+    [ ] Config bind loop uses Bind → Save → GetInt (not Bind-only).
+
+================================================================================
+FIX 14 — universal rule.txt §44 CLARIFYING NOTE
+================================================================================
+
+Insert after the LOCAL_PATH guard code block in §44:
+
+This is the canonical form. Any other LOCAL_PATH guard appearing in
+    an earlier family document (CSA Automatic Pattern, Master Prompt V1.0,
+    Session Diary, Cleo Convert Resource) is superseded by this section.
+
+================================================================================
+FIX 15 — CSI MENU CREATE — ADD CLICKABLE-ITEM GUARD COMMENT
+================================================================================
+
+Insert immediately above the AddSettingsTab(...) call in CSI menu create.txt:
+
+// IMPORTANT — if you replace AddButton with AddClickableItem:
+    //   - switchesArray length MUST equal (maxVal - minVal + 1)
+    //   - the array MUST be a file-scope static (lifetime > menu)
+    //   - passing nullptr with maxVal > minVal SIGSEGVs in
+    //     SelectScreen::SettingSelection::Render
+    //   - if you don't need labels, use AddSliderItem
+
+================================================================================
+FIX 16 — DOC STATUS SUMMARY
+================================================================================
+
+Doc 1  CSA Automatic Pattern         Stale guard, missing FIX 3
+    Doc 2  Master Prompt V1.0            Non-canonical guard
+    Doc 3  Session Diary                 Stale guard, missing 3 errors
+    Doc 4  Cleo Convert Resource         Garbled Op<> rule, stale guard
+    Doc 5  CSI Button Pause Menu         logger->*, missing config.cpp
+    Doc 6  CSI Menu Create               logger->*, missing config.cpp
+    Doc 7  Lessons Learned               Nearly clean
+    Doc 8  universal rule v2.6           Authoritative
+
+After applying FIX 0 through FIX 15, the family is internally consistent:
+    - one canonical Android.mk guard
+    - one logging method (__android_log_print)
+    - one config pattern (Bind → Save → GetInt)
+    - one Op<ID> spelling
+    - one GET/STORE gating rule
+    - one clickable-array rule
+    - one MYMODCFG build requirement
+
+================================================================================
+END OF CANONICAL FIXES & ERRATA
+================================================================================
+
+SESSION CATALOG — Addendum v1.1
+
+Fixes Discovered This Session
+
+---
+
+FIX A — The -1 Actor Handle Trap
+
+Symptom
+
+Mod loads cleanly, then crashes on the very first actor-related opcode. Crash signature:
+
+```
+Exception Signal 11 - SIGSEGV (SEGV_MAPERR)
+Fault address: 0x0000007Cxxxxxxxx (truncated pointer, near-zero)
+libGTASA.so + 0x3F65DC (_ZN14CRunningScript23ProcessCommands200To299Ei)
+X0  = &OpcodeCaller::g_Script
+X19 = same (callee-saved)
+X14 = libIV_BURNOUT64.so + 0x7CA1B (our mod's return address)
+X21..X23 = stale values from a previous VM invocation
+```
+
+Cause
+
+CLEO scripts frequently write $PLAYER_ACTOR in source, which the Sanny Builder compiler
+expands to the constant -1. In SA's script VM, -1 is not a VM-level alias for
+the local player ped. It is forwarded verbatim to CPools::GetPed(-1), which returns
+null. The opcode handler for IS_CHAR_IN_ANY_CAR (0x00DF) and every sibling in the
+200–299 range then dereferences that null pointer inside the dispatcher.
+
+Wrong
+
+```cpp
+if (!Op<0x00DF>(-1))            // IS_CHAR_IN_ANY_CAR
+    return;
+
+if (!Op<0x00DB>(-1, 0))         // IS_CHAR_IN_CAR
+    return;
+```
+
+Right
+
+```cpp
+// Resolve the player's SCM ped handle once per tick:
+g_actor = CPools::GetPedRef(player);
+if (g_actor <= 0)
+    return;
+
+if (!Op<0x00DF>(g_actor))
+    return;
+
+if (!Op<0x00DB>(g_actor, g_car))
+    return;
+```
+
+Where the fix lives
+
+Inside Update(), at the top of the tick, after the ped-pointer session check:
+
+```cpp
+CPlayerPed* player = FindPlayerPed(-1);
+if (!player) { /* reset state */ return; }
+
+// Session boundary detection
+if (player != g_LastPlayer) { /* reset */ }
+
+// NEW: resolve the SCM handle
+g_actor = CPools::GetPedRef(player);
+if (g_actor <= 0)
+    return;
+```
+
+Rule for the catalog
+
+Whenever a CLEO source references $PLAYER_ACTOR or $PLAYER_CHAR, resolve it
+via CPools::GetPedRef(FindPlayerPed(-1)) at the top of the tick and pass the
+resulting handle to every actor opcode. Never pass -1.
+
+---
+
+FIX B — The Synthetic CRunningScript Needs a Full Reset Per Call
+
+Symptom
+
+Same crash signature as Fix A, but it persists even when the correct actor handle
+is supplied. The dispatcher crashes on the second or third opcode in a tick,
+not the first.
+
+Cause
+
+OpcodeCaller's constructor initialises g_Script exactly once. It zeroes the
+whole struct and sets only:
+
+· m_szName
+· m_pBaseIP, m_pCurrentIP
+· m_nScriptBrainType = -1
+· m_bWastedBustedCheck = true
+
+The previous wrapper only reset m_pBaseIP, m_pCurrentIP, and
+m_bWastedBustedCheck before each call. Everything else — m_nSP, m_anTimers,
+m_nLogicalOp, m_bNotFlag, m_bIsExternal, m_bIsMission — was left at whatever
+the game's ProcessOneCommand last wrote.
+
+The critical field is m_nSP. CollectParameters uses m_nSP as the base index
+into m_aLocalVars[40]. After the first opcode call leaves m_nSP non-zero, the
+second call's parameter writes walk off the end of the local variable array,
+corrupting adjacent fields that the dispatcher then reads as pointers.
+
+Wrong
+
+```cpp
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    OpcodeCaller::g_Script.m_pBaseIP =
+        OpcodeCaller::g_Script.m_pCurrentIP =
+            OpcodeCaller::g_ScriptBuffer;
+
+OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+return Command<ID>(args...);
+}
+```
+
+Right
+
+```cpp
+template <uint16_t ID, typename... Args>
+static inline bool Op(Args... args)
+{
+    auto& s = OpcodeCaller::g_Script;
+
+s.m_bIsActive          = true;
+    s.m_bCondResult        = false;
+    s.m_nLogicalOp         = 0;      // eLogicalOperation::NONE
+    s.m_bNotFlag           = false;
+    s.m_bWastedBustedCheck = true;
+    s.m_bWastedOrBusted    = false;
+    s.m_bIsExternal        = false;
+    s.m_bIsMission         = false;
+    s.m_bUseMissionCleanup = false;
+    s.m_bTextBlockOverride = false;
+    s.m_nSP                = 0;      // <-- the critical field
+    s.m_anTimers[0]        = 0;
+    s.m_anTimers[1]        = 0;
+    s.m_nScriptBrainType   = -1;
+    s.m_nWakeTime          = 0;
+    s.m_pSceneSkipIP       = 0;
+    s.m_pBaseIP = s.m_pCurrentIP = OpcodeCaller::g_ScriptBuffer;
+
+return Command<ID>(args...);
+}
+```
+
+Where the fix lives
+
+Directly inside the Op<ID> wrapper, applied on every call, not once per session.
+
+Rule for the catalog
+
+Every mod's Op<ID> wrapper must reset the entire synthetic CRunningScript
+state before every call. The three fields set by the reference wrapper are not
+enough. Add m_nSP = 0 first; the other fields are insurance.
+
+Reference fields that must be reset
+
+Field Reason
+m_nSP Base index into m_aLocalVars[40] — stale value corrupts the parameter buffer
+m_bIsActive Dispatcher short-circuits if false
+m_bCondResult Read as the IF result
+m_nLogicalOp Read as the AND/OR chain state
+m_bNotFlag Read as the NOT modifier
+m_bIsExternal Affects which handler paths run
+m_bIsMission Same
+m_anTimers[0..1] Read by timer-bearing opcodes
+m_nScriptBrainType -1 matches CRunningScript::Init
+m_nWakeTime 0 = no delay
+m_pSceneSkipIP Null = no skip
+m_pNext, m_pPrev Null; already zero from the constructor
+
+---
+
+FIX C — What "IV_BURNOUT" Actually Does (Diagnostic Note)
+
+The trap
+
+The CLEO source is named IV_BURNOUT.cs and its opening comment mentions a
+"burnout effect". The word burnout suggests a tire-smoke / fire / sparks visual.
+It does not do that.
+
+Reading the source literally, the entire action reduces to:
+
+```
+wait 7500
+if and
+  is_car_engine_on 1@
+  not is_car_upsidedown 1@
+  is_car_stopped 1@       <-- car must be COMPLETELY stationary
+  is_button_pressed 14    <-- Square held at this exact frame
+  is_button_pressed 16    <-- Cross held at this exact frame
+goto_if_false @149
+burst_car_tyre 1 on_car 1@
+wait 250
+burst_car_tyre 3 on_car 1@
+```
+
+The only visible result is two burst tires. No smoke, no fire, no sparks, no
+flashing, no camera shake, no screen flash. The word "burnout" in the filename is
+the author's tagline, not a description of what the script does.
+
+The order of the operations matters
+
+The wait 7500 happens before the condition check. So the buttons must be
+held at the single frame the delay ends, not for the full 7.5 seconds.
+
+If the car is drifting (moving sideways), is_car_stopped returns false at that
+frame and the entire check fails — the tires never burst. The source only fires
+when the car is fully motionless with handbrake and throttle held at the moment
+the timer expires.
+
+Rule for the catalog
+
+When a CLEO script's filename or comment uses a word like "burnout", "fire",
+"explosion", "smoke", or "sparks", verify against the actual opcodes in the body
+before assuming the effect matches the name. The IV_BURNOUT source uses only
+burst_car_tyre; there is no fire in the script at all.
+
+Follow-up if a real visual effect is wanted
+
+A visual burnout mod (smoke + sparks + fire + screen flash) is a separate build.
+All the required opcodes are declared:
+
+Effect Opcode Range
+Smoke particles at rear wheels 0x095C (ADD_SMOKE_PARTICLE) declared
+Ground sparks 0x08EB (ADD_SPARKS) declared
+Continuous fire FX on car 0x066B (CREATE_FX_SYSTEM_ON_CAR) declared
+Camera shake 0x015B (SHAKE_PAD) declared
+
+No non-PSDK opcodes needed. This is not part of IV_BURNOUT and should be a separate
+mod.
+
+---
+
+FIX D — ENEX_UNLOCK Name List Expansion
+
+Symptom
+
+Mod worked. Some building interiors that the source script's name list doesn't
+include (barbers, tattoo parlors, food shops, clothing stores) remained locked.
+
+Cause
+
+The original CLEO source hardcodes 61 enex names. That list covers the specific
+interiors the original author cared about. Everything else stays at its default
+access value.
+
+PSDK audit result
+
+The AML-PSDK does not contain any hardcoded enex name list. Names live in the
+game's IPL data files (data/maps/*.IPL, enex sections). There is no runtime
+API in the loaded PSDK to enumerate them. The 2dEffect.h header defines the
+tEffectEnEx struct that the game uses to store enex data, but not the data
+itself. The GarageName enum in Garages.h is a different system (garages, not
+entry/exits) and must not be confused with enex names.
+
+Fix
+
+Expand the name list in main.cpp. Unknown names passed to SWITCH_ENTRY_EXIT
+(0x07FB) are silently ignored by the game — no crash, no side effect, no
+performance cost worth measuring. The list can therefore be generous.
+
+Growth over three versions
+
+Version Base names Extended names Total per tick
+v1.0 61 0 61
+v1.1 61 25 86
+v1.2 61 ~145 ~206
+
+Confidence tiers
+
+Category Confidence Basis
+The original 61 names Certain From the working CLEO source
+Numbered variants of names already in the base list (CARMOD4, DINER2, GF7, POLICE1…) High Pattern matches SA's own naming
+Service-shop categories (BARBERS*, TATTOO*, BURGER*, CLUCKIN*, PIZZA*, AMMUN*, GYM*, SHOP*, VICTIM*, SUBURB*, PROLAPS*, BINCO*, ZIP*, DIDIER*, TSHIRT*) Medium Plausible per SA conventions, individual numbering may be off
+Categories I cannot verify (CASINO*, BANK*, HOSPITAL*, STRIP*, PIGPEN*, DANCE*) Low Best-guess only
+Named characters as enex names (MADDDOG, JIZZY, TORENO, WOOZIE) Low May not exist as enex keys at all
+
+Rule for the catalog
+
+When a CLEO source has a hardcoded name list and additional categories need to
+be unlocked, expand the list rather than guessing per-name. Unknown names are
+harmless because SWITCH_ENTRY_EXIT ignores them. To make the list definitive,
+extract the enex sections from the target game's IPL files and use the actual
+keys.
+
+Ground-truth method (for a future v1.3)
+
+Each enex section in an IPL looks like:
+
+```
+enex
+NAME, x, y, z, angle, targetX, targetY, targetZ, targetAngle, flags, interiorType, skyColor, ...
+NAME, x, y, z, ...
+end
+```
+
+Pasting any of these sections into the conversation gives the exact keys. The
+extended array can then be replaced with verified names only.
+
+Toggle without rebuild
+
+Two switches inside main.cpp:
+
+```cpp
+#define ENABLE_EXTENDED 1     // set to 0 to disable the extended list entirely
+```
+
+Individual categories can be commented out of kExtendedNames[] without any
+change elsewhere.
+
+---
+
+Summary — Rules to Add to the Standing Catalog
+
+# Rule
+1 $PLAYER_ACTOR / $PLAYER_CHAR in CLEO must be resolved via CPools::GetPedRef(FindPlayerPed(-1)) at the top of the tick. Never pass -1 to actor opcodes.
+2 Every Op<ID> call must reset the entire synthetic CRunningScript state — m_nSP first, then all other dispatcher-read fields. Three-field resets leave the second and third opcodes in a tick vulnerable.
+3 A CLEO script's filename is not a description of its behaviour. Read the opcodes, not the tagline.
+4 The PSDK does not contain hardcoded enex name lists. Names live in IPL files. SWITCH_ENTRY_EXIT silently ignores unknown keys, so generous name lists are safe.
+5 When a source has a hardcoded list and more coverage is wanted, expand the list rather than guessing per-item. Resolve ambiguities later with actual data files.
+6 Both crash signatures (X0 = &g_Script, PC = ProcessCommands200To299) are produced by two different bugs — a bad actor handle, or stale m_nSP state. Test the handle fix first; if it survives past the first opcode, then apply the full state reset.
+
+---
+
+Session entries added:
+
+· 2026-10-07 — IV_BURNOUT: 3 crash rounds, root cause = -1 actor handle, secondary = stale m_nSP
+· 2026-10-07 — ENEX_UNLOCK: v1.0 → v1.1 → v1.2, PSDK audit, list expanded from 61 to ~206 names
+
+Author: Wazitech
+Credit: RusJJ, DK22Pac, AML Team
+
+########## MASTER PROMPT V1.0 ##########
+
+=====================================================================
+AML MOD CONVERSION — MASTER PROMPT
+=====================================================================
+
+You are converting CLEO scripts (.csa / .csi) or building new native mods
+for GTA: San Andreas Android, targeting the AML runtime + AML-PSDK.
+
+Follow the rules below exactly. Do not deviate. Do not add unverified
+APIs, extra dependencies, or unrelated code. Do not explain — produce
+the files.
+
+=====================================================================
+1. THE Op<ID> PATTERN — mandatory for all opcode-driven work
+=====================================================================
+
+Every script opcode goes through this wrapper, defined once per mod:
+
+#include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+
+template <uint16_t ID, typename... Args>
+    static inline bool Op(Args... args)
+    {
+        OpcodeCaller::g_Script.m_pBaseIP =
+            OpcodeCaller::g_Script.m_pCurrentIP =
+                OpcodeCaller::g_ScriptBuffer;
+
+OpcodeCaller::g_Script.m_bWastedBustedCheck = true;
+
+return Command<ID>(args...);
+    }
+
+Rules for the wrapper:
+- The opcode number is a compile-time template parameter. Never
+  CommandByID with a runtime opcode value.
+- m_pBaseIP and m_pCurrentIP are reset to g_ScriptBuffer before every
+  call. Without this, the second opcode reads its bytes from wherever
+  the first left the pointer.
+- m_bWastedBustedCheck = true is the flag CRunningScript::Init sets.
+  Some opcodes behave differently without it.
+- Return the VM's condition flag. Callers use plain if (Op<...>(...)).
+
+Output parameters are pointers to stack locals or to namespace-scoped
+statics. Both work — OpcodeCaller copies the VM result back through the
+pointer after the command returns.
+
+8xxx opcodes (NOT-prefixed) use the same argument string as their 0xxx
+base opcode. The SCM handler clears the NOT flag internally.
+
+=====================================================================
+2. HOOK POINT — always processScriptsEvent for opcode work
+=====================================================================
+
+ON_MOD_LOAD()
+    {
+        Events::processScriptsEvent += []() { Mod::Update(); };
+    }
+
+processScriptsEvent fires inside CTheScripts::Process, on the game
+thread, immediately before the game runs its own scripts. The script
+VM's global state is consistent there.
+
+Never use Events::gameProcessEvent for opcode-driven work. It fires
+earlier in the frame when some VM state is not yet re-established.
+
+Use gameProcessEvent only for pure PSDK field manipulation (no
+opcodes). Even then, prefer processScriptsEvent unless you have a
+specific reason not to.
+
+=====================================================================
+3. SESSION RE-ARM — the mod must run forever, across all sessions
+=====================================================================
+
+Every mod must survive: new game, save load, in-game restart, death +
+respawn, autoload, checkpoint return.
+
+Two mechanisms. Register both.
+
+3a. Session events
+
+ON_MOD_LOAD()
+    {
+        Events::restartGameEvent += []() { Mod::ResetState(); };
+        Events::initGameEvent    += []() { Mod::ResetState(); };
+        Events::reInitGameEvent  += []() { Mod::ResetState(); };
+    }
+
+These cover the three distinct engine code paths that begin a session.
+Registering only one leaves some load paths unhandled.
+
+3b. Player-ped pointer check inside Update()
+
+static CPlayerPed* g_LastPlayer = nullptr;
+
+static void Update()
+    {
+        CPlayerPed* player = FindPlayerPed(-1);
+
+if (!player)
+        {
+            g_LastPlayer = nullptr;
+            return;
+        }
+
+if (player != g_LastPlayer)
+        {
+            g_LastPlayer = player;
+            // full reset of all mod-specific state
+        }
+
+// ... continue with the mod's work
+    }
+
+The ped pointer changes on every session boundary. This check catches
+paths the events might miss and cannot get stuck.
+
+Every mod's namespace contains:
+
+static void ResetState()
+    {
+        // zero every flag, timestamp, cached handle, vector, etc.
+    }
+
+ResetState() is called by the three session events. It must not touch
+the Op<ID> wrapper, the tick logic, or the opcode sequence.
+
+=====================================================================
+4. HEADER INCLUDES — include what you use
+=====================================================================
+
+Standard include block for an opcode-driven mod:
+
+#include <mod/amlmod.h>
+    #include <android/log.h>
+
+#include <aml-psdk/game_sa/Events.h>
+    #include <aml-psdk/game_sa/base/Timer.h>
+    #include <aml-psdk/game_sa/utils/OpcodeCaller.h>
+    #include <aml-psdk/game_sa/entity/PlayerPed.h>
+
+Logging macros:
+
+#define LOG_TAG "ModName"
+    #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+    #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+Use __android_log_print, never logger->Info. The mod/logger.h header is
+not guaranteed present in every AML build; liblog (linked with -llog)
+always is.
+
+Add headers on demand:
+- CPlayerPed, FindPlayerPed      -> entity/PlayerPed.h
+- CPed, m_pIntelligence          -> entity/Ped.h
+- CVehicle                       -> entity/Vehicle.h
+- CAutomobile, CHeli, CPlane     -> entity/Automobile.h
+- CBike, CBmx                    -> entity/Bike.h
+- CPools, CPedPool               -> other/Pools.h
+- CWeaponInfo, CWeapon           -> other/WeaponInfo.h
+- eWeaponType, WEAPONTYPE_*      -> enum/WeaponType.h
+- CStreaming                     -> engine/Streaming.h
+- CGameLogic                     -> engine/GameLogic.h
+- CTimer, CTimer::GetTimeInMS()  -> base/Timer.h
+
+Rule: if the .cpp touches a game class by name, include the header that
+declares it. The compiler will name the missing symbol on a mismatch.
+
+=====================================================================
+5. TIMING — wraparound-safe
+=====================================================================
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+Never use now >= target on a u32 millisecond counter — it fails across
+the ~49.7-day wrap. All timestamps are u32.
+
+For delays, use:
+
+static uint32_t nextTick = 0;
+    const uint32_t now = CTimer::GetTimeInMS();
+    if (!Reached(now, nextTick)) return;
+    nextTick = now + INTERVAL_MS;
+
+For session-scoped timers (fire once per session), key the reset off the
+player-ped pointer change, not the raw timestamp alone.
+
+=====================================================================
+6. EDGE-TRIGGERED WRITES — never top-up every tick
+=====================================================================
+
+When writing a value that has a target (ammo, health, proofs, etc.),
+write only when the current value is below or different from the target:
+
+if (weapon.m_nAmmoTotal < MAX_AMMO)
+        weapon.m_nAmmoTotal = MAX_AMMO;
+
+if (player->m_nWeaponAccuracy != ACCURACY)
+        player->m_nWeaponAccuracy = ACCURACY;
+
+Never write every tick unconditionally. Two failure modes come from
+that:
+- Visual flicker (HUD ammo counter, health bar).
+- Bypassing the game's own cooldowns (writing m_nTimeForNextShot = 0
+  every tick turns every weapon full-auto).
+
+Exception: flags the game periodically resets (proof flags, certain AI
+state bits) may require per-tick re-application. When you do that,
+document it in a comment.
+
+=====================================================================
+7. STREAMING — required before any model-dependent action
+=====================================================================
+
+Before giving a weapon, spawning a vehicle, or loading a ped model:
+
+for (const auto& w : g_Weapons)
+        CStreaming::RequestModel(w.modelId, 2);   // 2 = high priority
+
+CStreaming::LoadAllRequestedModels(false);
+
+Then apply via the opcode (01B2 for weapons). Do not call
+SetModelIsDeletable on any model the player will use later — the
+streaming system will evict it and reintroduce the crash on next use.
+
+The crash on first use of a not-yet-streamed model is: NULL model
+pointer dereference → SIGSEGV in libGTASA.so.
+
+=====================================================================
+8. MENU BUTTONS — SAUtils is allowed only for menus
+=====================================================================
+
+SAUtils' ScriptCommand path is deprecated (§75.1) — it crashes on
+pointer arguments. Only the menu API is used:
+
+#include "SAUtils/isautils.h"
+    ISAUtils* sautils = nullptr;   // extern from sautils.h
+
+Pause-menu button (SAUtils >= 1.4.1):
+
+sautils = (ISAUtils*)GetInterface("SAUtils");
+    if (!sautils) { LOGE("SAUtils missing"); return; }
+
+sautils->AddSettingsTabButton(
+        "Button Label",
+        OnButtonCallback,        // void(*)(void*)
+        STB_Pause,               // STB_MainMenu / STB_Pause / STB_StartGame / STB_Settings
+        "menu_mainsettings",
+        nullptr);
+
+Settings-tab variant (SAUtils >= 1.3):
+
+eTypeOfSettings tab = sautils->AddSettingsTab("TabName", "menu_mainsettings");
+    sautils->AddButton(tab, "Button Label", OnButtonCallback);   // void(*)(uintptr_t)
+
+Register the button AFTER registering the deferred-execution tick, so
+the mod functions even if SAUtils is not present.
+
+=====================================================================
+9. BUTTON CALLBACK — UI thread → game thread handoff
+=====================================================================
+
+The menu callback fires on the UI thread. It must not touch game state,
+must not call opcodes, must not stream models. It only sets a flag:
+
+static volatile bool g_bActionRequested = false;
+
+static void OnButtonCallback(void* /*data*/)
+    {
+        g_bActionRequested = true;
+    }
+
+The flag is consumed on the game thread inside processScriptsEvent:
+
+Events::processScriptsEvent += []()
+    {
+        if (g_bActionRequested)
+        {
+            g_bActionRequested = false;
+            PerformAction();       // streaming + opcodes + logging
+        }
+    };
+
+=====================================================================
+10. PER-SESSION vs PER-TICK WORK
+=====================================================================
+
+Per-session (fires once per session, then goes quiet):
+- Writing to a global table (CWeaponInfo, CPedType relationships).
+- Loading config, computing derived values.
+- Re-applying values after a save-load rebuild.
+
+Guard with an edge-triggered flag that clears on session boundary:
+
+static bool g_bAppliedThisSession = false;
+
+if (g_bAppliedThisSession) return;
+    if (!Op<0x0256>(0)) return;   // wait until player is playing
+    ApplyOnce();
+    g_bAppliedThisSession = true;
+
+The session events reset g_bAppliedThisSession = false.
+
+Per-tick (fires every frame or on a timer):
+- Protecting actors, applying proofs to spawned members.
+- Distance checks, teleport logic.
+- Reading state that changes frequently.
+
+Guard with a lightweight time check:
+
+const uint32_t now = CTimer::GetTimeInMS();
+    if (!Reached(now, g_NextTick)) return;
+    g_NextTick = now + INTERVAL_MS;
+
+=====================================================================
+11. BUILD FILES — send these verbatim
+=====================================================================
+
+Android.mk:
+
+LOCAL_PATH := $(call my-dir)
+
+ifneq ($(findstring /toolchain/ndk/,$(LOCAL_PATH)),)
+        ifneq ($(NDK_PROJECT_PATH),)
+            LOCAL_PATH := $(NDK_PROJECT_PATH)
+        else
+            LOCAL_PATH := $(CURDIR)
+        endif
+    endif
+
+include $(CLEAR_VARS)
+    LOCAL_CPP_EXTENSION := .cpp .cc
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+LOCAL_SRC_FILES := main.cpp
+
+LOCAL_C_INCLUDES := $(LOCAL_PATH) \
+                        $(LOCAL_PATH)/mod \
+                        $(LOCAL_PATH)/aml-psdk
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+include $(BUILD_SHARED_LIBRARY)
+
+If the mod uses SAUtils menus, add: $(LOCAL_PATH)/SAUtils
+
+Application.mk:
+
+[Duplicate removed: identical block appears earlier in this document; see earlier occurrence.]
+
+=====================================================================
+12. MOD DECLARATION
+=====================================================================
+
+MYMODCFG(net.author.modname, ModName, 1.0, Author)
+    NEEDGAME(com.rockstargames.gtasa)
+
+Use MYMOD if no config file is needed. Use MYMODCFG if the mod reads
+settings via cfg->GetInt / GetFloat / GetBool.
+
+Package name format: net.author.modname or com.author.modname, all
+lowercase.
+
+=====================================================================
+13. NAME CONVENTIONS
+=====================================================================
+
+<<<Name>>>        : capitalised, matches the .so filename stem (e.g. QTRGT)
+<<<TAG>>>         : same as <<<Name>>>, used for logcat
+<<<Section>>>     : INI section name, e.g. "Weapons"
+<<<ButtonLabel>>> : what the user taps, e.g. "Give All Weapons"
+<<<TabName>>>     : short tab label, e.g. "WCSFN"
+
+=====================================================================
+14. DEPRECATED — do not use
+=====================================================================
+
+- SAUtils ScriptCommand / CALLSCM / DEFOPCODE. Varargs crash on pointer
+  arguments; SIGABRT raised from the mod's own .so.
+- extern ISAUtils* sautils as the opcode path. SAUtils.h declares it but
+  never defines it; linking fails with "undefined symbol: sautils".
+- Op<> without the 0x prefix (that is a different template).
+- Task-type-based recruited-member detection (false positives on rival
+  gangsters, mission followers).
+- Raw offsets for undeclared fields (e.g. CPed::m_nPedGroup). If the
+  field is not declared in the SDK, find a script opcode that returns
+  the value instead.
+- Direct CPhysical proof flag writes as a permanent replacement for
+  02AB. They work but the game resets them; prefer the opcode if one
+  exists.
+- Events::gameProcessEvent for opcode work.
+- logger->Info / logger->Error unless <mod/logger.h> is confirmed
+  present.
+- Writing a value every tick when an edge-triggered write suffices.
+- SetModelIsDeletable on models the player will use.
+
+=====================================================================
+15. VERIFICATION CHECKLIST — before returning the files
+=====================================================================
+
+For every mod:
+[ ] Op<ID> wrapper present and used for every opcode.
+[ ] m_pBaseIP = m_pCurrentIP = g_ScriptBuffer before every command.
+[ ] m_bWastedBustedCheck = true before every command.
+[ ] Hook registered on Events::processScriptsEvent.
+[ ] ResetState() defined and registered on all three session events.
+[ ] Player-ped pointer session check inside Update().
+[ ] Every game-class reference has a matching #include.
+[ ] Every timer uses Reached() and u32 timestamps.
+[ ] Every target-valued write is edge-triggered.
+[ ] Every model-dependent action streams first.
+[ ] Menu buttons use SAUtils, register after the deferred tick.
+[ ] Button callback only sets a flag.
+[ ] Logging via __android_log_print, not logger->*.
+[ ] No SAUtils ScriptCommand / CALLSCM / DEFOPCODE.
+[ ] Android.mk has the LOCAL_PATH guard and per-ABI module name.
+[ ] Application.mk matches the family standard.
+
+=====================================================================
+16. OUTPUT FORMAT
+=====================================================================
+
+Produce exactly three files, each in its own fenced code block:
+
+1. main.cpp       — full mod, with a header comment block
+  2. Android.mk
+  3. Application.mk
+
+No explanations between code blocks — only the three files, each
+labelled with its filename. If the mod uses SAUtils menus, add a
+one-line note in the main.cpp header saying which SAUtils version it
+requires.
+
+If the user asks to convert a CLEO script, produce the three files
+directly from the source. If they ask a question or want a partial
+change, answer accordingly without regenerating the whole mod.
+
+=====================================================================
+17. CONTEXT — what to send alongside this prompt
+=====================================================================
+
+Send one of:
+- A CLEO .csa / .csi source (disassembled or as text).
+- A description of the mod's desired behaviour.
+- A previous main.cpp that needs updating.
+
+If sending a CLEO script, include every opcode and every wait. The
+conversion is verbatim — the argument order comes from the source, not
+from a reference table.
+
+Yes. Here are the protocol additions that came directly out of what went wrong and right in our sessions. They slot into your existing document style — §22 through §30 for 01_Core_Rules_and_Protocols.txt, and they're all things that would have prevented a real problem we hit.
+
+---
+
+```
+================================================================================
+22. READ-ONLY vs BUILD MODE — NEW
+================================================================================
+
+Every interaction starts in READ-ONLY mode. The assistant produces no
+files, no code, no version bump, until the user switches modes with an
+explicit build verb.
+
+READ-ONLY triggers (assistant must NOT build):
+    "check", "review", "look at", "read", "what does X do",
+    "how was it", "is it possible", "can we", "explain",
+    "what about", any question ending in "?"
+
+BUILD triggers (assistant may produce files):
+    "build", "create", "make", "write", "send the full version",
+    "convert", "implement", "add this", "remove this"
+
+If the user says "check the originals" — the reply is a report, not a
+file. If the user asks "can we add X" — the reply is a yes/no with a
+plan, not the addition itself.
+
+Violation symptom: the user replies "I did not say you should create it
+now" or "I meant the original" — you were in the wrong mode.
+
+================================================================================
+23. FEATURE-CREEP AUDIT — NEW
+================================================================================
+
+A single mod accumulates layers across versions. The layer count is not
+tracked anywhere visible, so both sides lose sight of what the mod
+originally was.
+
+Rule:
+    - Before any change that adds a feature, state the current version's
+      line count and feature count.
+    - After any addition, state the new line count and feature count.
+    - On any 5th version bump in one session, produce a "current vs
+      original" summary before the next build — what the mod was, what
+      it is now, in a table.
+
+If the user asks "how was it before", answer with that table. Do not
+regenerate the file.
+
+================================================================================
+26. HANDLE LIFECYCLE — NEW
+================================================================================
+
+Every managed handle the mod creates (radar blip, pickup, script fire,
+sphere, checkpoint, temporary entity) must be tracked.
+
+Required bookkeeping per handle:
+    - Store the creation handle and any entity handle it is attached to
+    - Remove on entity despawn (0x056D fails or IS_CHAR_DEAD)
+    - Remove on range exit if the feature is range-bounded
+    - Remove on feature toggle OFF
+    - Remove on session boundary (ResetState)
+    - Remove on module unload
+
+Symptoms of a leak: orphan blips that never clear, pickups that persist
+across sessions, script fires that never extinguish. All are the same
+bug — a handle was created and never removed on one of the five paths.
+
+================================================================================
+27. POOL SCAN vs SECTOR SCAN — NEW
+================================================================================
+
+Two ways to find entities. Not interchangeable.
+
+CWorld::FindObjectsInRange
+    → sector-bounded
+    → only sees entities in loaded sectors
+    → practical ceiling ~200 m regardless of the radius argument
+    → fast, safe, but blind beyond the streaming bubble
+
+Pool iteration (CPools::ms_pPedPool, ms_pVehiclePool, ms_pObjectPool)
+    → sees every live entity, resident or not
+    → no streaming limit
+    → must skip free slots, must check IsPlayer, must check dead
+    → use for "find far away" features
+
+Rule:
+    Range ≤ 200 m          → either works
+    Range > 200 m          → pool iteration only
+    Toggleable radius      → pool iteration (radius max cannot exceed
+                              what the scan method supports)
+
+================================================================================
+29. MENU PLACEMENT — NEW
+================================================================================
+
+Pause menu vs Settings tab is not a style choice. It is a functional
+split.
+
+    Pause menu       → ACTIONS. Things that fire once and do something.
+                       Teleport, give, spawn, trigger.
+
+    Settings tab     → CONFIGURATION. Persistent values the user tunes.
+                       Sliders, toggles, radii, coordinates.
+
+Never mix. A toggle does not live on the pause menu. A teleport button
+does not live on the settings tab.
+
+Pause-menu items use AddSettingsTabButton.
+Settings-tab items use AddSettingsTab + AddButton / AddClickableItem /
+AddSliderItem.
+
+Corollary: a settings tab is where the user configures the pause-menu
+action. The action itself always fires from the pause menu.
+
+================================================================================
+30. AUDIT TRAIL — NEW
+================================================================================
+
+Every version bump from v2.0 onwards maintains a cumulative
+`CHANGELOG.md` beside the source, with:
+
+    - Version number
+    - Date
+    - One line per change
+    - Category tag: [ADD] [REMOVE] [FIX] [RENAME] [REFACTOR]
+
+The header comment in main.cpp can be short. The CHANGELOG is the
+authority.
+
+Without this, "how was it before v3.5" is unanswerable without reading
+every version's source. With it, the answer is a grep.
+
+================================================================================
+31. STANDING APPLICATION OF §22–§30
+================================================================================
+
+These sections apply to every mod touched from this point forward, at
+the same authority as §1 (authority order), §14 (menu header), and §15
+(INI header).
+
+§22 (READ-ONLY) is absolute — a single violation collapses the trust
+that makes long sessions efficient.
+
+§23 (feature-creep audit) is required whenever a mod crosses five
+versions in one session.
+
+§26 (handle lifecycle) is checked on every shipping build. A leak is
+not a style issue, it is a crash waiting for the right session boundary.
+
+=====================================================================
+END OF MASTER PROMPT
+=====================================================================
+
+########## CORRECTION ACKNOWLEDGED (INI Header) ##########
+
+Correction Acknowledged — INI Header Must Be Visible Keys, Not Comments
+
+You are right. Protocol §15 as written showed the header block as ;-commented lines. That is wrong. The header must be visible — actual INI keys the user can read directly when they open the file, not hidden behind comment markers.
+
+Corrected INI Header Format
+
+```ini
+[Info]
+Author=Wazitech
+Version=x.y
+Credit=RusJJ, DK22Pac, AML Team
+Requires=AML + AML-PSDK
+Game=GTA:SA 2.00 (32-bit, armeabi-v7a) / 2.10 (64-bit, arm64-v8a)
+```
+
+Or without a section header if the mod's config lays flat:
+
+```ini
+Author=Wazitech
+Version=x.y
+Credit=RusJJ, DK22Pac, AML Team
+Requires=AML + AML-PSDK
+Game=GTA:SA 2.00 (32-bit, armeabi-v7a) / 2.10 (64-bit, arm64-v8a)
+```
+
+What Changed in My Memorized Rule
+
+Before (wrong) After (correct)
+Header written with ; comment prefix Header written as visible key=value lines
+User had to parse comments to read metadata User sees metadata immediately as real keys
+Not machine-readable Machine-readable, can be queried like any other key
+Could be stripped by INI editors that drop comments Survives round-trip through any INI parser
+
+Rules Now Internalized
+
+1. The INI header block is written as visible keys, not as comment lines.
+2. A [Info] section is used to keep the metadata separate from functional config sections (unless the mod's config is flat, in which case the keys go at the top before any other section).
+3. Author, Version, Credit, Requires, Game are the key names. Requires lists AML + AML-PSDK only (the INI is written independently of SAUtils availability).
+4. Version tracks the mod version and is rewritten on next save when the mod version changes.
+5. The header is emitted on first save and preserved on every subsequent save.
+6. Functional config keys and sections follow the header in the normal AML config format — they do not merge with it.
+7. No ; comment markers on the header block. Comments, if any, are used only for genuine inline notes elsewhere in the file (e.g. "edit only while the game is closed" as a separate comment line is acceptable, but the metadata itself is keys).
+
+Where This Overrides Previous Docs
+
+· Protocol v1.1 §15 — corrected: header is visible keys, not comments.
+· Protocol v1.1 §20 checklist — updated wording: "Config INI begins with the Author / Version / Credit / Requires / Game key block" (was: "header block" implying comments).
+· CANONICAL FIXES & ERRATA — this correction applies forward; the errata doc did not cover §15, so this is a fresh correction on top of v1.1.
+
+I have updated my working rule. Any INI I generate or instruct on will now emit the metadata as visible keys, not commented lines.
