@@ -1,1 +1,107 @@
-
+H_CPP.txt/ (192 files)
+├── 🎮 AML-PSDK Framework — mod-loader infrastructure
+│   ├── aml.cpp.txt / aml.h.txt — core mod loader
+│   ├── amlmod.h.txt — mod base class
+│   ├── iaml.h.txt — AML interface
+│   ├── interface.cpp.txt / interface.h.txt / interfaces.h.txt
+│   ├── config.cpp.txt / config.h.txt
+│   ├── icfg.cpp.txt / icfg.h.txt / icfg_desc.h.txt — config UI descriptors
+│   ├── logger.cpp.txt / logger.h.txt / alog.cpp.txt
+│   ├── modpaks.cpp.txt / modpaks.h.txt — mod package handling
+│   ├── modslist.cpp.txt / modslist.h.txt
+│   ├── mls.cpp.txt / mls.h.txt — mod list UI
+│   ├── listitem.h.txt
+│   ├── gc.cpp.txt — garbage collection hook
+│   ├── signal.cpp.txt — crash/signal handling
+│   ├── jcrasher.h.txt — Java crash reporting
+│   ├── il2cpp.h.txt / jnifn.h.txt / localref.h.txt — JNI/IL2CPP bridging
+│   ├── plugin.h.txt
+│   ├── vtable_hooker.h.txt — vtable hooking utility
+│   ├── scopeguard.h.txt
+│   ├── cryptutils.h.txt / httputils.h.txt
+│   ├── stb_sprintf.h.txt
+│   ├── typedefs.h.txt / types.h.txt / defines.h.txt / functions.h.txt
+│   └── JINI.h.txt
+├── 🐉 CLEO Scripting Engine
+│   ├── cleo.h.txt / libcleo.cpp.txt
+│   ├── cleo4opcodes.cpp.txt / cleo5opcodes.cpp.txt
+│   ├── cleo4scmfunc.h.txt
+│   ├── cleo201_refactor.cpp.txt
+│   ├── cleoaddon.h.txt / cleohelpers.h.txt / cleomath.cpp.txt
+│   ├── OpcodeCaller.h.txt / OpcodeCallerIDs.h.txt
+│   ├── RunningScript.h.txt
+│   └── sdk_base.h.txt / sdk_basetypes.h.txt / sdk_callevents.h.txt
+├── 🧰 SA Utility Layer
+│   ├── isautils.h.txt
+│   ├── sautils.cpp.txt / sautils.h.txt
+│   ├── sautils_2_10.cpp.txt / sautils_2_10.h.txt
+│   ├── sautils_2_10_x64.cpp.txt
+│   └── sa_scripting.cpp.txt / sa_scripting.h.txt
+├── 🧱 RenderWare Engine (RW/RP/RX)
+│   ├── RwBase.h.txt / RwObject.h.txt / RwRender.h.txt
+│   ├── RwCamera.h.txt / RwFrame.h.txt / RwImage.h.txt
+│   ├── RwLinks.h.txt / RwMatrix.h.txt / RwRaster.h.txt
+│   ├── RwResource.h.txt / RwStream.h.txt / RwTexture.h.txt
+│   ├── RwVector.h.txt / RwRGBA.h.txt
+│   ├── RpAtomic.h.txt / RpClump.h.txt / RpGeometry.h.txt
+│   ├── RpLight.h.txt / RpMaterial.h.txt / RpMesh.h.txt / RpWorld.h.txt
+│   ├── RxPipeline.h.txt
+│   ├── RsGlobal.h.txt — Rs (system) globals
+│   └── VisibilityPlugins.h.txt
+├── 🌍 World, Streaming & Environment
+│   ├── World.h.txt / Streaming.h.txt / Weather.h.txt
+│   ├── PathFind.h.txt / ColModel.h.txt
+│   ├── ModelInfo.h.txt / VehicleModelInfo.h.txt
+│   ├── TextureDatabase.h.txt / TxdStore.h.txt
+│   ├── SurfaceType.h.txt / Garages.h.txt
+│   ├── CutsceneMgr.h.txt / LoadingScreen.h.txt
+│   ├── Pools.h.txt / MemoryMgr.h.txt / FileMgr.h.txt
+│   └── Clock.h.txt / Timer.h.txt / TaskTimer.h.txt / ThreadSyncer.h.txt
+├── 🧍 Entities, Peds & AI
+│   ├── Entity.h.txt / Physical.h.txt / Placeable.h.txt / Object.h.txt
+│   ├── Ped.h.txt / PedEnums.h.txt / PedIntelligence.h.txt
+│   ├── PlayerPed.h.txt / PlayerData.h.txt / PlayerInfo.h.txt
+│   ├── Task.h.txt / TaskManager.h.txt / TaskType.h.txt
+│   ├── DecisionMaker.h.txt / GangWars.h.txt / Scanner.h.txt
+│   ├── Event.h.txt — CEventGroup
+│   ├── Event (1).h.txt — CEvent / eEventType
+│   ├── Events.h.txt / EventEditableResponse.h.txt
+│   ├── Pickup.h.txt / Fire.h.txt
+│   └── ObjectExtender.h.txt / PedExtender.h.txt / BaseExtender.h.txt
+├── 🚗 Vehicles
+│   ├── Vehicle.h.txt / Vehicles.h.txt / Automobile.h.txt
+│   ├── Bike.h.txt / Boat.h.txt / Train.h.txt
+│   ├── Handling.h.txt / HandlingData.h.txt
+│   ├── CarMission.h.txt
+│   └── VehicleExtender.h.txt
+├── 🔊 Audio
+│   ├── AudioEngine.h.txt
+│   ├── AEAudioEntity.h.txt / AECollisionAudioEntity.h.txt
+│   ├── AEDoorAudioEntity.h.txt / AEFrontendAudioEntity.h.txt
+│   └── AEPedlessSpeechAudioEntity.h.txt / AEScriptAudioEntity.h.txt
+├── 🎥 Camera & Visual Effects
+│   ├── Cam.h.txt
+│   ├── Camera.h.txt — CCamera class
+│   ├── Camera (1).h.txt — eCamMode / eSwitchType enums
+│   ├── Fx.h.txt / FxManager.h.txt / FxPrimitives.h.txt / FxSystem.h.txt
+│   ├── 2dEffect.h.txt / PointLights.h.txt
+│   ├── Coronas.h.txt / CoronasExtender.h.txt
+│   ├── Shadows.h.txt / Sprite.h.txt / Sprite2d.h.txt
+│   ├── Lines.h.txt / DrawVertices.h.txt / Draw.h.txt / drawing_utils.h.txt
+│   └── AnimBlendAssocGroup.h.txt
+├── 🖥️ HUD, UI & Text
+│   ├── Hud.h.txt / MobileMenu.h.txt / Widgets.h.txt
+│   ├── Font.h.txt / Text.h.txt / GxtChar.h.txt / Messages.h.txt
+│   └── Radar.h.txt / Rect.h.txt / Lists.h.txt
+├── 🕹️ Input & System
+│   ├── Pad.h.txt
+│   ├── HID.h.txt — CHid input class
+│   ├── HID (1).h.txt — HIDMapping enum
+│   └── OS.h.txt
+├── 🧮 Math & Base Types
+│   └── Matrix.h.txt / Vector.h.txt / Quaternion.h.txt / RGBA.h.txt
+├── 🎯 Game Core & Combat
+│   ├── Game.h.txt / GameLogic.h.txt / Stats.h.txt
+│   └── Weapon.h.txt / WeaponInfo.h.txt / WeaponType.h.txt
+└── 📄 Reference Doc
+    └── GTA SAN ANDREAS ANDROID - AML-PSDK COMPLETE ADDRESS INVENTORY.txt
