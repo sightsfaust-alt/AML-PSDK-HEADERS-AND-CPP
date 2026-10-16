@@ -1,4 +1,4 @@
-H_CPP.txt/ (192 files)
+Headers.txt/
 ├── 🎮 AML-PSDK Framework — mod-loader infrastructure
 │   ├── aml.cpp.txt / aml.h.txt — core mod loader
 │   ├── amlmod.h.txt — mod base class
